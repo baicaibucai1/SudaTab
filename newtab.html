@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SudaTab</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body data-bg="aurora">
+
+<div class="bg" aria-hidden="true">
+  <div class="bg-grad"></div>
+  <svg class="bg-waves" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
+    <defs>
+      <linearGradient id="wA" x1="0" y1="0" x2="1" y2="0.6">
+        <stop offset="0" stop-color="#ffffff" stop-opacity=".40"/>
+        <stop offset=".55" stop-color="#ffffff" stop-opacity=".08"/>
+        <stop offset="1" stop-color="#ffffff" stop-opacity=".28"/>
+      </linearGradient>
+      <linearGradient id="wB" x1="0" y1="0" x2="1" y2="0.4">
+        <stop offset="0" stop-color="#3FB8CE" stop-opacity=".58"/>
+        <stop offset=".6" stop-color="#9FE6EA" stop-opacity=".36"/>
+        <stop offset="1" stop-color="#2FA3BC" stop-opacity=".52"/>
+      </linearGradient>
+      <linearGradient id="wC" x1="0" y1="0" x2="1" y2="0.5">
+        <stop offset="0" stop-color="#F6BBA4" stop-opacity=".42"/>
+        <stop offset=".5" stop-color="#FFE6D6" stop-opacity=".20"/>
+        <stop offset="1" stop-color="#F3A98E" stop-opacity=".36"/>
+      </linearGradient>
+      <filter id="soft" x="-25%" y="-25%" width="150%" height="150%">
+        <feGaussianBlur stdDeviation="9"/>
+      </filter>
+      <filter id="soft2" x="-25%" y="-25%" width="150%" height="150%">
+        <feGaussianBlur stdDeviation="26"/>
+      </filter>
+    </defs>
+    <g filter="url(#soft2)">
+      <path d="M-160 330 C 220 210 470 400 780 330 C 1080 262 1250 330 1600 250 L1600 -60 L-160 -60 Z" fill="url(#wC)"/>
+    </g>
+    <g filter="url(#soft)">
+      <path d="M-160 700 C 200 596 470 764 790 654 C 1080 554 1270 630 1600 556 L1600 980 L-160 980 Z" fill="url(#wA)" opacity=".72"/>
+      <path d="M-160 792 C 250 690 520 852 830 742 C 1100 646 1300 716 1600 652 L1600 980 L-160 980 Z" fill="url(#wB)" opacity=".88"/>
+      <path d="M-160 862 C 300 768 560 900 880 812 C 1150 736 1330 800 1600 744 L1600 980 L-160 980 Z" fill="#2CA8BF" opacity=".42"/>
+    </g>
+  </svg>
+  <div class="bg-grain"></div>
+</div>
+
+<main class="canvas" id="canvas" aria-label="主界面">
+  <div class="grid-overlay" id="gridOverlay" aria-hidden="true"></div>
+</main>
+
+<div class="topbar">
+  <button class="ghost" id="btnSettings" type="button" aria-label="打开设置" title="设置">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round">
+      <path d="M4 7.5h9M17.5 7.5H20M4 16.5h4M12.5 16.5H20"/>
+      <circle cx="15" cy="7.5" r="2.3"/><circle cx="10" cy="16.5" r="2.3"/>
+    </svg>
+  </button>
+</div>
+
+<div class="hint" id="hint"></div>
+
+<div class="scrim" id="scrim" hidden></div>
+
+<aside class="drawer" id="drawer" aria-hidden="true" aria-label="设置">
+  <div class="drawer-head">
+    <h2>设置</h2>
+    <button class="ghost" id="btnClose" type="button" aria-label="关闭设置">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round">
+        <path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/>
+      </svg>
+    </button>
+  </div>
+
+  <div class="drawer-body">
+    <section class="field">
+      <div class="field-head"><span class="label">背景</span></div>
+      <div class="swatches" id="bgSwatches"></div>
+    </section>
+
+    <section class="field">
+      <div class="field-head"><span class="label">搜索引擎</span></div>
+      <div class="segmented" id="engineSeg"></div>
+    </section>
+
+    <section class="field">
+      <div class="field-head">
+        <span class="label">网格密度</span>
+        <span class="field-tag" id="densityHint"></span>
+      </div>
+      <div class="segmented" id="densitySeg"></div>
+      <p class="field-note">列数越少，每个方块越大。调整后站点方块会自动重新排列。</p>
+    </section>
+
+    <section class="field">
+      <div class="field-head">
+        <span class="label">快捷方式</span>
+        <button class="text-btn" id="btnAddLink" type="button">添加</button>
+      </div>
+      <div class="rows" id="linkRows"></div>
+    </section>
+
+    <section class="field">
+      <div class="field-head"><span class="label">布局</span></div>
+      <div class="btn-row">
+        <button class="btn" id="btnResetLayout" type="button">重置位置</button>
+        <button class="btn" id="btnExport" type="button">导出备份</button>
+      </div>
+      <div class="btn-row" style="margin-top:8px">
+        <button class="btn" id="btnReset" type="button">恢复全部默认</button>
+      </div>
+    </section>
+  </div>
+</aside>
+
+<script src="app.js"></script>
+</body>
+</html>

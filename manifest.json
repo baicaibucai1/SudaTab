@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "SudaTab",
+  "version": "0.1.0",
+  "description": "SudaTab · 网格化新标签页：图标、时钟、搜索框都是可拖动的方块。",
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "permissions": [
+    "storage",
+    "favicon"
+  ],
+  "minimum_chrome_version": "104"
+}

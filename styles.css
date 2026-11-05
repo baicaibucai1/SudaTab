@@ -464,6 +464,41 @@ body.is-dragging .widget:not(.dragging) {
 }
 .w-link.is-square .tile:hover .name { color: var(--label-fg, #fff); }
 
+/* ---- 1×1：白色应用图标铺满整格，名称是挂在方块外面的独立标签 ----
+   图标不再给名称让位（白色图标的白色底就是整块），名称也不参与图标的裁剪；
+   行距 GAP_Y 更大，标签正好落在两行之间的空隙里 */
+.w-link.is-unit .tile {
+  padding: 0;
+  gap: 0;
+  overflow: visible;
+  border-radius: 24%;
+}
+.w-link.is-unit .ico {
+  width: 100%;
+  height: 100%;
+  border-radius: 24%;
+}
+/* 整块就是图标，悬停时不再整体上浮，只让图标阴影抬起 */
+.w-link.is-unit .tile:hover { background: transparent; transform: none; }
+.w-link.is-unit .tile:hover .ico { transform: none; }
+.w-link.is-unit .name {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 50%;
+  right: auto;
+  transform: translateX(-50%);
+  width: auto;
+  max-width: calc(100% + 20px);
+  height: auto;
+  padding: 0;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  pointer-events: auto;
+  z-index: 3;
+}
+
 /* ---- 非 1×1 的块：整块铺一层圆角矩形底板 ----
    1×1 的图标自己就是那个方块，不需要外框；2×1 / 1×2 / 2×2 / 4×2
    用一块和占位同形状的底板把「我占多大」直接画出来 */

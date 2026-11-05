@@ -15,6 +15,8 @@
 
   var COLS = 24;    /* 当前列数，会随「网格密度」设置变化 */
   var GAP = 12;
+  /* 行距比列距大：1×1 的名称挂在方块下面，需要一段不被下一行压住的空隙 */
+  var GAP_Y = 18;
 
   var DENSITIES = [16, 24, 32, 40];
 
@@ -376,14 +378,14 @@
     var rowH = (unit - (UNIT_H - 1) * GAP) / UNIT_H;
     if (rowH < 6) { rowH = 6; }
 
-    var stepY = rowH + GAP;
-    var viewRows = Math.floor((H + GAP) / stepY);
+    var stepY = rowH + GAP_Y;
+    var viewRows = Math.floor((H + GAP_Y) / stepY);
     var rows = Math.max(4, viewRows, BASE_ROWS);
 
     return {
       W: W, H: H, colW: colW, rowH: rowH,
       rows: rows, viewRows: viewRows,
-      stepX: stepX, stepY: stepY
+      stepX: stepX, stepY: stepY, gapY: GAP_Y
     };
   }
 
@@ -843,8 +845,11 @@
       var s = Math.min(r.width, r.height);
 
       /* 1×1 的图标本身就是方块；更大的块需要一层同形状的底板把范围画出来 */
-      var plate = (item.w / UNIT_W) * (item.h / UNIT_H) > 1.001;
+      var units = (item.w / UNIT_W) * (item.h / UNIT_H);
+      var plate = units > 1.001;
+      var unit = square && units <= 1.001;   /* 单格：图标铺满整块，名称独立挂在下面 */
       item.el.classList.toggle('is-plate', plate);
+      item.el.classList.toggle('is-unit', unit);
       if (plate) {
         item.el.style.setProperty('--plate-r', Math.round(clamp(s * 0.17, 14, 24)) + 'px');
       }
@@ -852,21 +857,28 @@
       var ico, labelSize;
 
       if (square) {
-        /* 图标尽量占满方块，下面只留名称的完整行高 */
-        labelSize = clamp(s * 0.125, 11.5, 15);
-        var labelH = Math.ceil(labelSize * 1.15) + 1;
-        var pad = Math.round(s * (plate ? 0.085 : 0.03));
-        var gap = Math.round(s * 0.035);
-        ico = Math.min(s - pad * 2 - gap - labelH - 1, s * (plate ? 0.66 : 0.78));
-        item.el.style.setProperty('--pad', pad + 'px');
-        item.el.style.setProperty('--gap', gap + 'px');
-        item.el.style.setProperty('--label', labelH + 'px');
+        if (unit) {
+          /* 图标占满整格（白色应用图标），名称交给 CSS 定位到方块外面，
+             不再和图标抢高度，也就不会被裁掉 */
+          ico = s;
+          labelSize = clamp(s * 0.15, 11, 16);
+        } else {
+          /* 2×2：图标坐在底板里，下面留出名称的完整行高 */
+          labelSize = clamp(s * 0.125, 11.5, 15);
+          var labelH = Math.ceil(labelSize * 1.15) + 1;
+          var pad = Math.round(s * 0.085);
+          var gap = Math.round(s * 0.035);
+          ico = Math.min(s - pad * 2 - gap - labelH - 1, s * 0.66);
+          item.el.style.setProperty('--pad', pad + 'px');
+          item.el.style.setProperty('--gap', gap + 'px');
+          item.el.style.setProperty('--label', labelH + 'px');
+        }
       } else if (horiz) {
         /* 宽扁方块：按高度取图标，否则 4x2 里图标会缩成一个小点 */
-        ico = clamp(r.height * 0.62, 24, 150);
+        ico = clamp(r.height * 0.72, 24, 150);
         labelSize = clamp(r.height * 0.15, 11, 20);
       } else if (vert) {
-        ico = clamp(r.width * 0.62, 24, 150);
+        ico = clamp(r.width * 0.72, 24, 150);
         labelSize = clamp(r.width * 0.135, 11, 18);
       } else {
         ico = clamp(s * 0.55, 22, 96);
@@ -875,7 +887,9 @@
 
       item.el.style.setProperty('--ico', Math.round(ico) + 'px');
       nm.style.fontSize = labelSize.toFixed(1) + 'px';
-      nm.style.maxWidth = horiz ? Math.max(40, r.width - ico - 40) + 'px' : '100%';
+      nm.style.maxWidth = unit
+        ? 'calc(100% + 20px)'
+        : (horiz ? Math.max(40, r.width - ico - 40) + 'px' : '100%');
     };
   }
 
@@ -985,7 +999,7 @@
     /* 拖动中挤到更下面的行时，网格层临时长高，这里不要把它压回去 */
     var cur = parseFloat(overlay.style.height) || 0;
     var rows = Math.max(m.rows, Math.ceil((cur + GAP) / m.stepY));
-    overlay.style.height = (rows * m.stepY - GAP).toFixed(1) + 'px';
+    overlay.style.height = (rows * m.stepY - m.gapY).toFixed(1) + 'px';
   }
 
   /* ---------------- 拖动 ---------------- */
@@ -1030,7 +1044,7 @@
       if (geo) {
         var bottom = 0;
         Object.keys(geo).forEach(function (k) { bottom = Math.max(bottom, geo[k].y + geo[k].h); });
-        overlay.style.height = (Math.max(m.rows, bottom) * m.stepY - GAP).toFixed(1) + 'px';
+        overlay.style.height = (Math.max(m.rows, bottom) * m.stepY - m.gapY).toFixed(1) + 'px';
       }
     }
 

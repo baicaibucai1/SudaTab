@@ -234,6 +234,9 @@
       }
     });
 
+    /* 旧布局里停在半格位置的图标，载入时拉回格点 */
+    alignLinksToCell(items);
+
     return {
       bg: BACKGROUNDS.some(function (b) { return b.id === s.bg; }) ? s.bg : d.bg,
       engine: ENGINES.some(function (e) { return e.id === s.engine; }) ? s.engine : d.engine,
@@ -398,6 +401,68 @@
     };
   }
 
+  /* ---------------- 格点对齐 ----------------
+     图标方块只能站在「格」上：横向 2 列、纵向 3 行（= 一个方块的大小）。
+     不然拖完会停在半格位置，和旁边同一排的图标错开半条，看着就是没对齐。
+     横向的奇偶取自现有图标的多数（默认布局是 5/7/9… 奇数），
+     这样吸附只把跑偏的拉回来，不会把已经摆好的一整排整体挪位。 */
+  function cellOriginX(list) {
+    var odd = 0, even = 0;
+    (list || state.items).forEach(function (o) {
+      if (o.type !== 'link') { return; }
+      if (Math.abs(o.x % UNIT_W) < 0.001) { even++; } else { odd++; }
+    });
+    return odd > even ? 1 : 0;
+  }
+
+  function snapCellX(x, w, origin, cols) {
+    origin = origin || 0;
+    var maxX = (cols || COLS) - w;
+    var v = origin + Math.round((x - origin) / UNIT_W) * UNIT_W;
+    if (v > maxX) { v = origin + Math.floor((maxX - origin) / UNIT_W) * UNIT_W; }
+    return Math.max(0, v);
+  }
+
+  function snapCellY(y, h, limit) {
+    var maxY = (typeof limit === 'number' ? limit : 4096) - h;
+    var v = Math.round(y / UNIT_H) * UNIT_H;
+    if (v > maxY) { v = Math.floor(maxY / UNIT_H) * UNIT_H; }
+    return Math.max(0, v);
+  }
+
+  /* 旧数据里停在半格位置的图标，载入时拉回格点。
+     目标位置被占就换一个候选，全被占就留在原处——宁可它自己歪着，
+     也不能为了对齐把别人的布局整块拆散。 */
+  function alignLinksToCell(items) {
+    var origin = cellOriginX(items);
+    items.forEach(function (o) {
+      if (o.type !== 'link') { return; }
+      var xOk = (Math.abs(o.x % UNIT_W) < 0.001) === (origin === 0);
+      var yOk = Math.abs(o.y % UNIT_H) < 0.001;
+      if (xOk && yOk) { return; }
+
+      /* 载入时 COLS 还是上一次的值，这里不按列数收边界（4096 = 不限制） */
+      var nx = snapCellX(o.x, o.w, origin, 4096);
+      var ny = snapCellY(o.y, o.h);
+      var cands = [[nx, ny], [nx, ny + UNIT_H], [nx, ny - UNIT_H],
+                   [nx + UNIT_W * (o.x >= nx ? 1 : -1), ny],
+                   [nx + UNIT_W * (o.x >= nx ? -1 : 1), ny]];
+
+      for (var i = 0; i < cands.length; i++) {
+        var cx = cands[i][0], cy = cands[i][1];
+        if (cx < 0 || cy < 0) { continue; }
+        var box = { x: cx, y: cy, w: o.w, h: o.h };
+        var hit = items.some(function (p) {
+          return p !== o && intersect(box, p);
+        });
+        if (hit) { continue; }
+        o.x = cx;
+        o.y = cy;
+        break;
+      }
+    });
+  }
+
   /* ---------------- 占位推挤 ---------------- */
 
   /* iOS 式就近挤入排布（替代原来的整列下推）：
@@ -412,7 +477,10 @@
       var b = o.id === it.id
         ? { x: box.x, y: box.y, w: box.w, h: box.h }
         : { x: o.x, y: o.y, w: o.w, h: o.h };
-      return { id: o.id, x: b.x, y: b.y, w: b.w, h: b.h, ox: o.x, oy: o.y };
+      /* 图标方块按「整格」挪（2 列 / 3 行），被挤开之后也还站在格点上；
+         时钟/搜索/引语这些按 1 列 1 行微调，保留原来的灵活度 */
+      return { id: o.id, x: b.x, y: b.y, w: b.w, h: b.h, ox: o.x, oy: o.y,
+               cell: o.type === 'link' };
     });
 
     function blocked(b, selfId) {
@@ -425,16 +493,18 @@
     /* 螺旋扩散：先试原地，再一圈圈往外，同行优先于换行 */
     function nearestFree(o) {
       var maxR = Math.max(cols, rowsLimit);
+      var sx = o.cell ? UNIT_W : 1;
+      var sy = o.cell ? UNIT_H : 1;
       for (var r = 0; r <= maxR; r++) {
         var best = null, bestCost = Infinity;
         for (var dy = -r; dy <= r; dy++) {
           for (var dx = -r; dx <= r; dx++) {
             if (Math.max(Math.abs(dx), Math.abs(dy)) !== r) { continue; }
-            var x = o.ox + dx, y = o.oy + dy;
+            var x = o.ox + dx * sx, y = o.oy + dy * sy;
             if (x < 0 || y < 0 || x + o.w > cols || y + o.h > rowsLimit) { continue; }
             var b = { x: x, y: y, w: o.w, h: o.h };
             if (blocked(b, o.id)) { continue; }
-            var cost = Math.abs(dx) + Math.abs(dy) * 1.35;
+            var cost = Math.abs(dx) * sx + Math.abs(dy) * sy * 1.35;
             if (cost < bestCost) { bestCost = cost; best = b; }
           }
         }
@@ -488,9 +558,13 @@
     });
   }
 
-  function findSpot(w, h, m) {
-    for (var y = 0; y + h <= m.rows; y++) {
-      for (var x = 0; x + w <= COLS; x++) {
+  function findSpot(w, h, m, cell) {
+    /* cell=true 时只沿格点走，新增的图标一落地就和已有的一排对齐 */
+    var sx = cell ? UNIT_W : 1;
+    var sy = cell ? UNIT_H : 1;
+    var x0 = cell ? cellOriginX() : 0;
+    for (var y = 0; y + h <= m.rows; y += sy) {
+      for (var x = x0; x + w <= COLS; x += sx) {
         var box = { x: x, y: y, w: w, h: h };
         var hit = state.items.some(function (o) { return intersect(box, o); });
         if (!hit) { return box; }
@@ -1025,6 +1099,7 @@
     var sx = e.clientX, sy = e.clientY;
     var scroll0 = canvas.scrollTop;
     var home = { x: item.x, y: item.y };
+    var cellX = cellOriginX();   /* 本次拖动沿用的列奇偶，途中不会变 */
 
     var started = false, finished = false;
     var curCol = item.x, curRow = item.y;
@@ -1093,11 +1168,15 @@
     function computeCell(ev) {
       /* 画布滚动后，同一个视口坐标对应的内容坐标会变 */
       var shift = canvas.scrollTop - scroll0;
-      return {
-        x: clamp(Math.round((ev.clientX - grabX) / m.stepX), 0, COLS - item.w),
-        y: clamp(Math.round((ev.clientY - grabY + shift) / m.stepY), 0,
-                 Math.max(0, Math.max(m.rows, BASE_ROWS + 8) - item.h))
-      };
+      var maxY = Math.max(0, Math.max(m.rows, BASE_ROWS + 8) - item.h);
+      var x = clamp(Math.round((ev.clientX - grabX) / m.stepX), 0, COLS - item.w);
+      var y = clamp(Math.round((ev.clientY - grabY + shift) / m.stepY), 0, maxY);
+      /* 图标只落在格点上，不然会和同一排的邻居错开半条 */
+      if (item.type === 'link') {
+        x = snapCellX(x, item.w, cellX);
+        y = snapCellY(y, item.h, maxY);
+      }
+      return { x: x, y: y };
     }
 
     function onMove(ev) {
@@ -1489,11 +1568,14 @@
 
   function applySize(item, w, h) {
     var m = metrics();
-    var box = { x: clamp(item.x, 0, COLS - w), y: item.y, w: w, h: h };
+    var bx = clamp(item.x, 0, COLS - w);
+    /* 放大后可能被右边挤回半格，图标一律再对齐一次 */
+    if (item.type === 'link') { bx = snapCellX(bx, w, cellOriginX()); }
+    var box = { x: bx, y: item.y, w: w, h: h };
     var g = plan(item, box, m);
 
     if (!g) {
-      var spot = findSpot(w, h, m);
+      var spot = findSpot(w, h, m, item.type === 'link');
       if (spot) {
         box = spot;
         g = plan(item, box, m);
@@ -2187,7 +2269,7 @@
 
       if (isNew) {
         var m = metrics();
-        var spot = findSpot(UNIT_W, UNIT_H, m) || { x: 0, y: 0 };
+        var spot = findSpot(UNIT_W, UNIT_H, m, true) || { x: 0, y: 0 };
         var ni = {
           id: uid(), type: 'link', title: title, url: url,
           x: spot.x, y: spot.y, w: UNIT_W, h: UNIT_H
@@ -2496,11 +2578,12 @@
     });
     if (cur.length) { rowsArr.push(cur); }
 
-    var y = startY;
+    var origin = cellOriginX();
+    var y = Math.ceil(startY / UNIT_H) * UNIT_H;   /* 行也要落在格点上 */
     rowsArr.forEach(function (row) {
       var total = 0;
       row.forEach(function (it) { total += it.w; });
-      var x = Math.max(0, Math.round((COLS - total) / 2));
+      var x = snapCellX(Math.max(0, Math.round((COLS - total) / 2)), total, origin);
       var rowH = 0;
       row.forEach(function (it) {
         it.x = x;
@@ -2508,7 +2591,7 @@
         x += it.w;
         rowH = Math.max(rowH, it.h);
       });
-      y += rowH;
+      y += Math.max(UNIT_H, Math.ceil(rowH / UNIT_H) * UNIT_H);
     });
     return y;
   }

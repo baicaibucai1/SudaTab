@@ -14,9 +14,19 @@
   var LEGACY_KEY = 'webtab.state.v3';  /* 旧名字的数据，读一次迁过来 */
 
   var COLS = 24;    /* 当前列数，会随「网格密度」设置变化 */
-  var GAP = 12;
-  /* 行距比列距大：1×1 的名称挂在方块下面，需要一段不被下一行压住的空隙 */
-  var GAP_Y = 18;
+
+  /* 外观默认值。这些都能在设置面板里调，并随 state 持久化：
+       gapX / gapY  方块之间的横向、纵向间距（px）
+       radius       图标圆角（占方块边长的百分比，0 = 直角）
+       labelScale   名称字号倍数 */
+  var TUNE = { gapX: 12, gapY: 18, radius: 24, labelScale: 1 };
+
+  var TUNE_KEYS = [
+    { key: 'gapX',       name: '横向间距', min: 6,    max: 32,  step: 1,    unit: 'px', def: 12 },
+    { key: 'gapY',       name: '纵向间距', min: 8,    max: 56,  step: 1,    unit: 'px', def: 18 },
+    { key: 'radius',     name: '图标圆角', min: 0,    max: 50,  step: 1,    unit: '%',  def: 24 },
+    { key: 'labelScale', name: '名称字号', min: 0.75, max: 1.4, step: 0.05, unit: '×',  def: 1 }
+  ];
 
   var DENSITIES = [16, 24, 32, 40];
 
@@ -74,6 +84,27 @@
   /* ---------------- 小工具 ---------------- */
 
   function clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+  /* 外观参数统一入口：非法/缺失回落到默认值，再夹进合法区间 */
+  function tuneNum(v, def, lo, hi) {
+    var n = Number(v);
+    if (!isFinite(n)) { n = def; }
+    return clamp(n, lo, hi);
+  }
+
+  function tuneOf(key) {
+    for (var i = 0; i < TUNE_KEYS.length; i++) {
+      if (TUNE_KEYS[i].key === key) { return TUNE_KEYS[i]; }
+    }
+    return null;
+  }
+
+  /* 纵向间距的下限：3 个行距之间的空隙里要能放下「名称行 + 一点呼吸位」 */
+  function gapYFloor(gapX) {
+    var ls = tuneNum(state.labelScale, TUNE.labelScale, 0.75, 1.4);
+    return Math.ceil((2 * gapX + 21 * ls + 8) / 3);
+  }
+
   function pad2(n) { return n < 10 ? '0' + n : String(n); }
   function uid() { return 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5); }
 
@@ -141,7 +172,12 @@
 
     items.push({ id: 'quote', type: 'quote', x: 6, y: 17, w: 12, h: 1, text: DEFAULT_QUOTE });
 
-    return { bg: 'aurora', engine: 'bing', cols: 24, locked: false, tipShown: false, items: items };
+    return {
+      bg: 'aurora', engine: 'bing', cols: 24, locked: false, tipShown: false,
+      gapX: TUNE.gapX, gapY: TUNE.gapY,
+      radius: TUNE.radius, labelScale: TUNE.labelScale,
+      items: items
+    };
   }
 
   /* ---------------- 状态归一化 ---------------- */
@@ -243,6 +279,10 @@
       cols: DENSITIES.indexOf(s.cols) >= 0 ? s.cols : d.cols,
       locked: !!s.locked,
       tipShown: !!s.tipShown,
+      gapX: tuneNum(s.gapX, TUNE.gapX, 6, 32),
+      gapY: tuneNum(s.gapY, TUNE.gapY, 8, 56),
+      radius: tuneNum(s.radius, TUNE.radius, 0, 50),
+      labelScale: tuneNum(s.labelScale, TUNE.labelScale, 0.75, 1.4),
       items: items
     };
   }
@@ -278,6 +318,10 @@
       cols: state.cols,
       locked: !!state.locked,
       tipShown: !!state.tipShown,
+      gapX: state.gapX,
+      gapY: state.gapY,
+      radius: state.radius,
+      labelScale: state.labelScale,
       items: state.items.map(serializeItem)
     };
   }
@@ -366,6 +410,8 @@
   var elRows = document.getElementById('linkRows');
   var elDensity = document.getElementById('densitySeg');
   var elDensityHint = document.getElementById('densityHint');
+  var elTune = document.getElementById('tuneList');
+  var tuneInputs = {};   /* key -> { input, out } 当前渲染的滑杆 */
 
   /* ---------------- 几何 ---------------- */
 
@@ -373,22 +419,34 @@
     var W = canvas.clientWidth;
     var H = canvas.clientHeight;
 
-    var colW = (W - GAP * (COLS - 1)) / COLS;
-    var stepX = colW + GAP;
+    var gapX = tuneNum(state.gapX, TUNE.gapX, 6, 32);
+    /* 纵向间距有个下限：行间空隙必须放得下挂在方块下方的名称，
+       否则把间距拉到最小的时候名字会压到下一行的图标上 */
+    var gapY = Math.max(tuneNum(state.gapY, TUNE.gapY, 8, 56), gapYFloor(gapX));
 
-    /* 行高由列宽推导：保证 2 列 × 3 行 恰好是正方形 */
-    var unit = UNIT_W * colW + (UNIT_W - 1) * GAP;
-    var rowH = (unit - (UNIT_H - 1) * GAP) / UNIT_H;
+    var colW = (W - gapX * (COLS - 1)) / COLS;
+
+    /* 极端密度下（40 列 + 大间距）间距会把格子本身吃光：
+       按「1×1 必须还是正方」解出间距上限，回收一次再算 */
+    var rowH = (2 * colW - gapX) / 3;
+    if (rowH < 6 && COLS > 1) {
+      var cap = (2 * W / COLS - 18) * COLS / (3 * COLS - 2);
+      gapX = Math.max(3, Math.min(gapX, cap));
+      colW = (W - gapX * (COLS - 1)) / COLS;
+      rowH = Math.max(6, (2 * colW - gapX) / 3);
+    }
     if (rowH < 6) { rowH = 6; }
 
-    var stepY = rowH + GAP_Y;
-    var viewRows = Math.floor((H + GAP_Y) / stepY);
+    var stepX = colW + gapX;
+    var stepY = rowH + gapY;
+    var viewRows = Math.floor((H + gapY) / stepY);
     var rows = Math.max(4, viewRows, BASE_ROWS);
 
     return {
       W: W, H: H, colW: colW, rowH: rowH,
       rows: rows, viewRows: viewRows,
-      stepX: stepX, stepY: stepY, gapY: GAP_Y
+      stepX: stepX, stepY: stepY,
+      gapX: gapX, gapY: gapY
     };
   }
 
@@ -396,8 +454,8 @@
     return {
       left: b.x * m.stepX,
       top: b.y * m.stepY,
-      width: b.w * m.colW + (b.w - 1) * GAP,
-      height: b.h * m.rowH + (b.h - 1) * GAP
+      width: b.w * m.colW + (b.w - 1) * m.gapX,
+      height: b.h * m.rowH + (b.h - 1) * m.gapX
     };
   }
 
@@ -907,6 +965,7 @@
     item.nameEl = nm;
 
     item.fit = function (r) {
+      var ls = tuneNum(state.labelScale, TUNE.labelScale, 0.75, 1.4);
       var ratio = r.width / r.height;
       var horiz = ratio > 1.65;          /* 2x1 / 4x2：图标在左，文字在右 */
       var vert = ratio < 1 / 1.65;       /* 1x2：图标在上，文字在下 */
@@ -925,7 +984,9 @@
       item.el.classList.toggle('is-plate', plate);
       item.el.classList.toggle('is-unit', unit);
       if (plate) {
-        item.el.style.setProperty('--plate-r', Math.round(clamp(s * 0.17, 14, 24)) + 'px');
+        /* 底板圆角和图标圆角同源：24% ≈ 原来的 0.17s */
+        var rr = tuneNum(state.radius, TUNE.radius, 0, 50) / 100 * 0.72;
+        item.el.style.setProperty('--plate-r', Math.round(clamp(s * rr, 0, s * 0.5)) + 'px');
       }
 
       var ico, labelSize;
@@ -935,10 +996,10 @@
           /* 图标占满整格（白色应用图标），名称交给 CSS 定位到方块外面，
              不再和图标抢高度，也就不会被裁掉 */
           ico = s;
-          labelSize = clamp(s * 0.15, 11, 16);
+          labelSize = clamp(s * 0.15, 11, 16) * ls;
         } else {
           /* 2×2：图标坐在底板里，下面留出名称的完整行高 */
-          labelSize = clamp(s * 0.125, 11.5, 15);
+          labelSize = clamp(s * 0.125, 11.5, 15) * ls;
           var labelH = Math.ceil(labelSize * 1.15) + 1;
           var pad = Math.round(s * 0.085);
           var gap = Math.round(s * 0.035);
@@ -950,13 +1011,13 @@
       } else if (horiz) {
         /* 宽扁方块：按高度取图标，否则 4x2 里图标会缩成一个小点 */
         ico = clamp(r.height * 0.72, 24, 150);
-        labelSize = clamp(r.height * 0.15, 11, 20);
+        labelSize = clamp(r.height * 0.15, 11, 20) * ls;
       } else if (vert) {
         ico = clamp(r.width * 0.72, 24, 150);
-        labelSize = clamp(r.width * 0.135, 11, 18);
+        labelSize = clamp(r.width * 0.135, 11, 18) * ls;
       } else {
         ico = clamp(s * 0.55, 22, 96);
-        labelSize = clamp(ico * 0.22, 9.5, 15);
+        labelSize = clamp(ico * 0.22, 9.5, 15) * ls;
       }
 
       item.el.style.setProperty('--ico', Math.round(ico) + 'px');
@@ -1043,6 +1104,9 @@
   function layoutAll() {
     var m = metrics();
 
+    /* 圆角是一个全局观感参数，挂在画布上给所有图标共用 */
+    canvas.style.setProperty('--ico-r', tuneNum(state.radius, TUNE.radius, 0, 50) + '%');
+
     state.items.forEach(function (it) {
       /* 拖动中窗口尺寸变化 / 其它刷新，都不把正在跟手的方块拉回原位 */
       if (it === draggingItem) {
@@ -1072,7 +1136,7 @@
     overlay.style.backgroundPosition = (-m.stepX / 2).toFixed(2) + 'px ' + (-m.stepY / 2).toFixed(2) + 'px';
     /* 拖动中挤到更下面的行时，网格层临时长高，这里不要把它压回去 */
     var cur = parseFloat(overlay.style.height) || 0;
-    var rows = Math.max(m.rows, Math.ceil((cur + GAP) / m.stepY));
+    var rows = Math.max(m.rows, Math.ceil((cur + m.gapX) / m.stepY));
     overlay.style.height = (rows * m.stepY - m.gapY).toFixed(1) + 'px';
   }
 
@@ -2446,6 +2510,7 @@
     renderSwatches();
     renderEngines();
     renderDensity();
+    renderTunings();
     paintClock();
     scheduleSave();
   }
@@ -2557,8 +2622,102 @@
     });
 
     var m = metrics();
-    var unit = UNIT_W * m.colW + (UNIT_W - 1) * GAP;
+    var unit = UNIT_W * m.colW + (UNIT_W - 1) * m.gapX;
     elDensityHint.textContent = '方块约 ' + Math.round(unit) + ' px';
+  }
+
+  /* ---- 外观微调（间距 / 圆角 / 字号） ---- */
+
+  function fmtTune(t, v) {
+    if (t.key === 'labelScale') {
+      return v.toFixed(2).replace(/\.?0+$/, '') + ' ×';
+    }
+    return Math.round(v) + ' ' + t.unit;
+  }
+
+  function renderTunings() {
+    if (!elTune) { return; }
+    elTune.textContent = '';
+    tuneInputs = {};
+
+    var floorY = gapYFloor(tuneNum(state.gapX, TUNE.gapX, 6, 32));
+
+    TUNE_KEYS.forEach(function (t) {
+      var lo = t.key === 'gapY' ? Math.max(t.min, floorY) : t.min;
+      var val = tuneNum(state[t.key], t.def, lo, t.max);
+      if (t.key === 'gapY' && val < lo) { val = lo; state.gapY = lo; }
+
+      var row = document.createElement('div');
+      row.className = 'tune';
+
+      var head = document.createElement('div');
+      head.className = 'tune-head';
+      var nm = document.createElement('span');
+      nm.className = 'tune-name';
+      nm.textContent = t.name;
+      var out = document.createElement('span');
+      out.className = 'tune-val';
+      out.textContent = fmtTune(t, val);
+      head.appendChild(nm);
+      head.appendChild(out);
+
+      var input = document.createElement('input');
+      input.type = 'range';
+      input.min = lo;
+      input.max = t.max;
+      input.step = t.step;
+      input.value = val;
+      input.setAttribute('aria-label', t.name);
+
+      /* 拖动中即时重排：方块位置随间距变化，能直接看出松紧 */
+      input.addEventListener('input', function () {
+        state[t.key] = Number(input.value);
+        out.textContent = fmtTune(t, state[t.key]);
+        if (t.key !== 'gapY') { syncGapYMin(); }
+        layoutAll();
+        refreshDensityHint();
+        scheduleSave();
+      });
+      input.addEventListener('change', function () {
+        layoutAll();
+        scheduleSave();
+      });
+
+      row.appendChild(head);
+      row.appendChild(input);
+      elTune.appendChild(row);
+
+      tuneInputs[t.key] = { input: input, out: out, t: t };
+    });
+  }
+
+  /* 横向拉宽 / 字号放大后，纵向间距的下限跟着抬高，滑杆本身也要跟着走 */
+  function syncGapYMin() {
+    var g = tuneInputs.gapY;
+    if (!g) { return; }
+    var floor = gapYFloor(tuneNum(state.gapX, TUNE.gapX, 6, 32));
+    g.input.min = floor;
+    if (Number(g.input.value) < floor) {
+      g.input.value = floor;
+      state.gapY = floor;
+      g.out.textContent = fmtTune(g.t, floor);
+    }
+  }
+
+  function refreshDensityHint() {
+    var m = metrics();
+    elDensityHint.textContent = '方块约 ' +
+      Math.round(UNIT_W * m.colW + (UNIT_W - 1) * m.gapX) + ' px';
+  }
+
+  function resetTunings() {
+    var before = serializeState();
+    TUNE_KEYS.forEach(function (t) { state[t.key] = t.def; });
+    layoutAll();
+    renderTunings();
+    scheduleSave();
+    pushUndo('恢复默认外观', before);
+    showTip('外观已恢复默认', 2200);
   }
 
   /* 把站点方块按行重新打包，每行居中；返回打包结束后的下一行 */
@@ -2696,6 +2855,7 @@
   document.getElementById('btnClose').addEventListener('click', closeDrawer);
   scrim.addEventListener('click', closeDrawer);
   document.getElementById('btnAddLink').addEventListener('click', addLink);
+  document.getElementById('btnTuneReset').addEventListener('click', resetTunings);
 
   /* 只重排坐标，不删用户添加的站点、不丢自定义图标 */
   document.getElementById('btnResetLayout').addEventListener('click', function () {
@@ -2800,6 +2960,7 @@
     renderSwatches();
     renderEngines();
     renderDensity();
+    renderTunings();
     paintClock();
   }
 

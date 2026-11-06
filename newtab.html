@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SudaTab</title>
-<link rel="stylesheet" href="styles.css?v=20261106a">
+<link rel="stylesheet" href="styles.css?v=20261106c">
 </head>
 <body data-bg="aurora">
 
@@ -102,6 +102,15 @@
 
     <section class="field">
       <div class="field-head">
+        <span class="label">外观</span>
+        <button class="text-btn" id="btnTuneReset" type="button">恢复默认</button>
+      </div>
+      <div class="tunings" id="tuneList"></div>
+      <p class="field-note">纵向间距里要给名称留位置，所以它的最小值随字号变化。圆角与字号按方块大小等比缩放，拖动即时生效。</p>
+    </section>
+
+    <section class="field">
+      <div class="field-head">
         <span class="label">快捷方式</span>
         <button class="text-btn" id="btnAddLink" type="button">添加</button>
       </div>
@@ -124,6 +133,6 @@
   </div>
 </aside>
 
-<script src="app.js?v=20261106a"></script>
+<script src="app.js?v=20261106c"></script>
 </body>
 </html>

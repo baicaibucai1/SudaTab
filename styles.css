@@ -373,7 +373,7 @@ body.is-dragging .widget:not(.dragging) {
 .w-link .ico {
   width: var(--ico, 54px); height: var(--ico, 54px);
   flex: none;
-  border-radius: min(24%, 26px);
+  border-radius: var(--ico-r, 24%);
   overflow: hidden;
   display: grid; place-items: center;
   background: rgba(255, 255, 255, .16);
@@ -437,7 +437,7 @@ body.is-dragging .widget:not(.dragging) {
 .w-link.is-square .ico {
   width: var(--ico, 64px);
   height: var(--ico, 64px);
-  border-radius: min(24%, 32px);
+  border-radius: var(--ico-r, 24%);
   background: #fff;
   box-shadow:
     0 4px 14px rgba(14, 26, 38, .16),
@@ -471,12 +471,12 @@ body.is-dragging .widget:not(.dragging) {
   padding: 0;
   gap: 0;
   overflow: visible;
-  border-radius: 24%;
+  border-radius: var(--ico-r, 24%);
 }
 .w-link.is-unit .ico {
   width: 100%;
   height: 100%;
-  border-radius: 24%;
+  border-radius: var(--ico-r, 24%);
 }
 /* 整块就是图标，悬停时不再整体上浮，只让图标阴影抬起 */
 .w-link.is-unit .tile:hover { background: transparent; transform: none; }
@@ -1226,6 +1226,58 @@ body.is-locked .widget { cursor: default; }
   background: var(--glass-hi);
   color: var(--fg);
   box-shadow: inset 0 0 0 1px var(--panel-brd);
+}
+
+/* 外观微调：间距 / 圆角 / 字号 */
+.tunings { display: flex; flex-direction: column; gap: 13px; }
+.tune { display: flex; flex-direction: column; gap: 5px; }
+.tune-head { display: flex; align-items: baseline; justify-content: space-between; }
+.tune-name { font-size: 11.5px; color: var(--fg-dim); }
+.tune-val { font-size: 11px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+
+.tune input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.tune input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--input-bg);
+  box-shadow: inset 0 0 0 1px var(--input-brd), inset 0 1px 2px rgba(0, 0, 0, .10);
+}
+.tune input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -5px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fg);
+  box-shadow: 0 1px 4px rgba(10, 16, 22, .38), 0 0 0 1px rgba(255, 255, 255, .10);
+  transition: transform .12s ease;
+}
+.tune input[type="range"]:hover::-webkit-slider-thumb { transform: scale(1.12); }
+.tune input[type="range"]:active::-webkit-slider-thumb { transform: scale(1.22); }
+.tune input[type="range"]:focus-visible { outline: none; }
+.tune input[type="range"]:focus-visible::-webkit-slider-thumb {
+  box-shadow: 0 0 0 3px var(--hover), 0 2px 6px rgba(10, 16, 22, .32);
+}
+.tune input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--input-bg);
+}
+.tune input[type="range"]::-moz-range-thumb {
+  width: 15px;
+  height: 15px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--fg);
 }
 
 /* 快捷方式列表 */

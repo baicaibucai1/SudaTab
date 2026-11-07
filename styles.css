@@ -13,6 +13,9 @@ body {
   background: #0d1116;
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  /* 1×1 图标要裁掉的最外一圈：用来去掉图片自带的白描边。
+     默认 0（一点不裁）；脚本量到「四条边都有宽度一致的浅色窄边」时才设上来 */
+  --icon-trim: 0%;
 }
 
 /* ---------------- 背景预设 ---------------- */
@@ -267,18 +270,28 @@ body.is-dragging .widget:not(.dragging) {
 
 .w-body { width: 100%; height: 100%; position: relative; }
 
-/* ---------------- 时钟部件 ---------------- */
+/* ---------------- 时钟部件 ----------------
+   字体 / 字重 / 对齐走 CSS 变量，由 applyClockLook 一处写入（画布与弹窗预览共用）。
+   字号是 JS 按占位量出来再写 inline 的，这里不写死 */
 
 .w-clock .w-body { display: grid; place-items: center; }
 
 .w-clock .clock-wrap {
-  display: flex; flex-direction: column; align-items: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 0 4%;
+  box-sizing: border-box;
   transform: translateY(-2%);
 }
+.w-clock.is-left .clock-wrap { align-items: flex-start; }
+.w-clock.is-right .clock-wrap { align-items: flex-end; }
 
 .w-clock .time {
-  font-family: "Segoe UI Variable Display", "Segoe UI Light", "Segoe UI", system-ui, sans-serif;
-  font-weight: 200;
+  font-family: var(--clk-face, "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif);
+  font-weight: var(--clk-weight, 200);
   line-height: .94;
   letter-spacing: -.015em;
   font-variant-numeric: tabular-nums;
@@ -288,60 +301,752 @@ body.is-dragging .widget:not(.dragging) {
 
 .w-clock .date {
   margin-top: .5em;
-  letter-spacing: .18em;
+  letter-spacing: .16em;
   color: var(--fg-dim);
   white-space: nowrap;
   text-shadow: 0 2px 14px rgba(20, 24, 30, .16);
 }
 
+.clk-dlg { width: min(660px, 94vw); }
+
+.card-dlg { width: min(520px, 94vw); }
+
+.card-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.card-swat {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, .28);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .10);
+  cursor: pointer;
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.card-swat:hover { transform: scale(1.08); }
+.card-swat.is-active {
+  box-shadow: 0 0 0 2px var(--fg), inset 0 0 0 1px rgba(0, 0, 0, .10);
+}
+.wx-toggles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.wx-tg {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 12px;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(255, 255, 255, .05);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background .14s ease, color .14s ease, border-color .14s ease;
+}
+.wx-tg::before {
+  content: '';
+  width: 13px;
+  height: 13px;
+  border-radius: 4px;
+  border: 1.5px solid rgba(255, 255, 255, .45);
+  box-sizing: border-box;
+}
+.wx-tg.is-on {
+  background: rgba(255, 255, 255, .16);
+  border-color: rgba(255, 255, 255, .34);
+  color: var(--fg);
+}
+.wx-tg.is-on::before {
+  background: var(--fg);
+  border-color: var(--fg);
+  box-shadow: inset 0 0 0 2.5px rgba(20, 24, 30, .85);
+}
+
+.card-swat.is-none {
+  background:
+    linear-gradient(45deg, transparent 46%, rgba(255, 255, 255, .55) 47%,
+                    rgba(255, 255, 255, .55) 53%, transparent 54%),
+    rgba(255, 255, 255, .08);
+}
+/* 这个弹窗里分段按钮多，缩一点才排得下一行 */
+.clk-dlg .dlg-seg { gap: 5px; }
+.clk-dlg .dlg-seg .seg { min-width: 50px; padding: 6px 9px; font-size: 12px; }
+.clk-dlg .sp-cols > .dlg-box { padding: 12px 13px; }
+/* 制式 / 秒 并排，省一行高度 */
+.clk-two { display: flex; gap: 11px; }
+.clk-two > .dlg-field { flex: 1; min-width: 0; }
+/* 制式 / 秒 / 补零 一行三个，日期单独占一整行 —— 弹窗不用滚 */
+.clk-grid3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  column-gap: 11px;
+}
+.clk-grid3 > .dlg-field { min-width: 0; }
+.clk-grid3 > .clk-span { grid-column: 1 / -1; }
+
+/* ---------------- 卡面 ----------------
+   铺在 .w-body 上，组件内容照旧。颜色 / 浓度 / 圆角由 applyCardLook 写成变量 */
+
+.widget.has-card > .w-body {
+  background: var(--card-bg, rgba(255, 255, 255, .14));
+  border-radius: var(--card-r, 20px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .16),
+              0 12px 34px rgba(10, 14, 20, .16);
+  backdrop-filter: blur(18px) saturate(145%);
+  -webkit-backdrop-filter: blur(18px) saturate(145%);
+  overflow: hidden;
+}
+.widget.has-card.no-blur > .w-body {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* ---------------- 注册表组件：天气 / 待办 / 月历 ----------------
+   三种组件共用同一套「占满自己那块、按 rect 缩放文字」的写法 */
+
+.w-weather, .w-todo, .w-calendar { z-index: 3; }
+
+/* 浅色壁纸上白字会糊，给组件文字一层很淡的投影（和时钟同一套做法） */
+.wx-temp, .wx-bot, .todo, .cal {
+  text-shadow: 0 2px 16px rgba(20, 24, 30, .22);
+}
+
+/* ---- 天气 ----
+   四个档位按实际像素切（见 wxTier）：mini / mid / big / huge。
+   块越大往里面填的东西越多：温度 → +城市高低温 → +未来几天 → +逐小时 */
+
+.wx {
+  width: 100%;
+  height: 100%;
+  padding: 8px 6%;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .35em;
+  color: var(--fg);
+}
+.wx-main {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .12em;
+  min-width: 0;
+  /* 允许压缩：不然大字号撑住高度，下面的预报会被顶出卡片 */
+  min-height: 0;
+}
+.w-weather.is-mini .wx { padding: 4px 6%; }
+.w-weather.is-mini .wx-bot { display: none; }
+
+/* big / huge：上面当前天气，下面预报 */
+.w-weather.is-big .wx,
+.w-weather.is-huge .wx {
+  justify-content: flex-start;
+  gap: .5em;
+  /* 下面压着两排小字，底边多留一点，别让数字贴着方块边 */
+  padding-bottom: 14px;
+}
+.w-weather.is-big .wx-main,
+.w-weather.is-huge .wx-main { flex: 1; justify-content: center; }
+
+.wx-days, .wx-hours { display: none; width: 100%; }
+
+.w-weather.is-big .wx-days,
+.w-weather.is-huge .wx-days {
+  display: flex;
+  flex: none;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: .45em;
+  border-top: 1px solid rgba(255, 255, 255, .14);
+  font-size: var(--wx-day-fs, 12px);
+}
+.w-weather.is-huge .wx-hours {
+  display: flex;
+  flex: none;
+  justify-content: space-between;
+  gap: 4px;
+  padding-top: .6em;
+  border-top: 1px solid rgba(255, 255, 255, .14);
+  font-size: var(--wx-hour-fs, 11px);
+}
+
+.wx-day {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .3em;
+  /* 左右留内边距，不然上一列的「高温」会贴着下一列的「低温」连成一串 */
+  padding: 0 9px;
+  color: var(--fg-dim);
+}
+.wx-dw { font-size: .92em; letter-spacing: .02em; }
+.wx-dico { display: block; width: 1.55em; height: 1.55em; color: var(--fg); opacity: .92; }
+.wx-dico svg { width: 100%; height: 100%; display: block; }
+.wx-dtemps {
+  display: flex;
+  align-items: center;
+  gap: .3em;
+  width: 100%;
+  font-size: .9em;
+}
+.wx-dtemps b { font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.wx-dhi { color: var(--fg); }
+.wx-dlo { color: var(--fg-faint); }
+
+/* 当天温度区间：一条按整周跨度定位的横条 */
+.wx-dbar {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 12px;
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .22);
+  overflow: hidden;
+}
+.wx-dbar u {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(150, 205, 255, .95), rgba(255, 210, 150, .95));
+}
+
+.wx-hour {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: .25em;
+}
+.wx-ht { color: var(--fg); font-variant-numeric: tabular-nums; }
+.wx-hh { color: var(--fg-faint); font-size: .88em; font-variant-numeric: tabular-nums; }
+
+.wx-hbar {
+  position: relative;
+  width: 100%;
+  height: 2.1em;
+}
+.wx-hbar u {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  transform: translateX(-50%);
+  width: 52%;
+  min-height: 3px;
+  border-radius: 4px 4px 2px 2px;
+  background: rgba(255, 255, 255, .72);
+}
+
+/* 指标行：湿度 / 风 / 气压 / 降水 / 日出日落 */
+.wx-stats {
+  display: none;
+  width: 100%;
+  flex: none;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: .35em .9em;
+  color: var(--fg-dim);
+  font-size: var(--wx-stat-fs, 11px);
+}
+.w-weather.show-stats.is-big .wx-stats,
+.w-weather.show-stats.is-huge .wx-stats { display: flex; }
+.wx-stat { display: inline-flex; align-items: baseline; gap: .3em; white-space: nowrap; }
+.wx-stat i { font-style: normal; color: var(--fg-faint); }
+.wx-stat b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
+
+/* 设置里关掉的块：放在最后，压过 .is-big / .show-detail 的显示规则 */
+.w-weather.no-days .wx-days,
+.w-weather.no-hours .wx-hours,
+.w-weather.no-detail .wx-detail { display: none; }
+
+.wx-top { display: flex; align-items: center; gap: .1em; }
+.wx-ico { display: block; color: var(--fg); opacity: .92; }
+.wx-ico svg { width: 100%; height: 100%; display: block; }
+.wx-temp {
+  display: inline-flex;
+  align-items: flex-start;
+  font-weight: 200;
+  line-height: .92;
+  letter-spacing: -.045em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 10px 40px rgba(20, 24, 30, .18);
+}
+/* 度数不跟着数字一起放大，顶在上沿 */
+.wx-deg {
+  font-size: .34em;
+  line-height: 1;
+  margin-top: .16em;
+  margin-left: .02em;
+  letter-spacing: 0;
+  opacity: .9;
+}
+.wx-bot {
+  display: flex;
+  align-items: baseline;
+  gap: .7em;
+  color: var(--fg-dim);
+  letter-spacing: .05em;
+  white-space: nowrap;
+}
+.wx-city { font-weight: 500; }
+.wx-hl { font-variant-numeric: tabular-nums; }
+
+/* 第二行小字：天气名 · 体感 · 湿度 · 风 */
+.wx-detail {
+  display: none;
+  color: var(--fg-faint);
+  letter-spacing: .04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+.w-weather.show-detail .wx-detail { display: block; }
+
+/* ---- 待办 ---- */
+.todo {
+  width: 100%;
+  height: 100%;
+  padding: 10px 12px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: var(--todo-fs, 13px);
+  color: var(--fg);
+}
+.todo-head { flex: none; display: flex; align-items: center; gap: 7px; }
+.todo-name { font-weight: 600; letter-spacing: .08em; }
+.todo-count {
+  font-size: .82em;
+  color: var(--fg-faint);
+  font-variant-numeric: tabular-nums;
+}
+.todo-plus {
+  margin-left: auto;
+  flex: none;
+  width: 1.9em;
+  height: 1.9em;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .14);
+  color: var(--fg);
+  cursor: pointer;
+  transition: background .15s ease, transform .12s ease;
+}
+.todo-plus:hover { background: rgba(255, 255, 255, .24); }
+.todo-plus:active { transform: scale(.92); }
+.todo-plus svg { width: .95em; height: .95em; }
+
+.todo-new { flex: none; }
+.todo-new input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: .45em .7em;
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, .3);
+  background: rgba(0, 0, 0, .16);
+  color: var(--fg);
+  font: inherit;
+  font-size: .95em;
+  outline: 0;
+}
+.todo-new input::placeholder { color: var(--fg-faint); }
+.todo-new input:focus { border-color: rgba(255, 255, 255, .55); }
+
+.todo-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-width: thin;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.todo-empty { color: var(--fg-faint); font-size: .92em; padding: .3em 0; }
+.w-todo.is-mini .todo-name { display: none; }
+.w-todo.is-mini .todo { padding: 7px 9px; gap: 5px; }
+
+.todo-more {
+  flex: none;
+  margin-top: 2px;
+  padding: .3em .5em;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--fg-faint);
+  font: inherit;
+  font-size: .86em;
+  text-align: left;
+  cursor: pointer;
+}
+.todo-more:hover { background: rgba(255, 255, 255, .1); color: var(--fg-dim); }
+
+.todo-row {
+  display: flex;
+  align-items: center;
+  gap: .55em;
+  padding: .22em .35em;
+  border-radius: 8px;
+  min-height: 1.7em;
+}
+.todo-row:hover { background: rgba(255, 255, 255, .09); }
+
+.todo-ck {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, .55);
+  background: transparent;
+  color: #20262e;
+  cursor: pointer;
+  transition: background .14s ease, border-color .14s ease;
+}
+/* iconEl 会把 svg 包进 .ctx-ico，那里的 display:block 优先级更高，
+   这里必须带上 .ctx-ico 才盖得住 */
+.todo-ck .ctx-ico { display: grid; place-items: center; width: auto; height: auto; color: inherit; }
+.todo-ck .ctx-ico svg { width: .78em; height: .78em; display: none; }
+.todo-row.is-done .todo-ck {
+  background: rgba(255, 255, 255, .92);
+  border-color: transparent;
+}
+.todo-row.is-done .todo-ck .ctx-ico svg { display: block; }
+
+.todo-txt {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.5;
+}
+.todo-row.is-done .todo-txt { color: var(--fg-faint); text-decoration: line-through; }
+
+.todo-del {
+  flex: none;
+  width: 1.5em;
+  height: 1.5em;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity .14s ease, background .14s ease;
+}
+.todo-del .ctx-ico { color: inherit; }
+.todo-del .ctx-ico svg { width: .8em; height: .8em; }
+.todo-row:hover .todo-del { opacity: .85; }
+.todo-del:hover { background: rgba(255, 255, 255, .14); }
+
+/* ---- 月历 ---- */
+.cal {
+  width: 100%;
+  height: 100%;
+  padding: 9px 11px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  font-size: var(--cal-fs, 12px);
+  color: var(--fg);
+}
+.cal-head {
+  flex: none;
+  text-align: center;
+  font-weight: 500;
+  letter-spacing: .06em;
+  margin-bottom: 3px;
+}
+
+/* 放不下整月时 → 只显示今天 */
+.cal-today {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: .22em;
+}
+.w-calendar.is-today .cal-today { display: flex; }
+.w-calendar.is-today .cal-head,
+.w-calendar.is-today .cal-grid { display: none; }
+
+.cal-tnum {
+  font-weight: 200;
+  line-height: .94;
+  letter-spacing: -.045em;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 10px 40px rgba(20, 24, 30, .18);
+}
+.cal-tmeta {
+  color: var(--fg-dim);
+  letter-spacing: .1em;
+  white-space: nowrap;
+}
+.cal-grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  align-items: center;
+  justify-items: center;
+  gap: 1px;
+}
+.cal-wd {
+  color: var(--fg-faint);
+  font-size: .82em;
+  font-weight: 500;
+}
+.cal-cell {
+  width: 1.85em;
+  height: 1.85em;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.cal-cell.is-out { opacity: .26; }
+.cal-cell.is-today {
+  background: rgba(255, 255, 255, .9);
+  color: #23282f;
+  font-weight: 600;
+}
+
 /* ---------------- 搜索部件 ---------------- */
 
-.w-search .w-body { display: grid; place-items: center; }
+.w-search { z-index: 3; }
 
-.search {
-  width: 100%;
-  height: min(52px, 100%);
-  min-height: 34px;
-  display: flex; align-items: center; gap: 2px;
-  padding: 0 18px 0 6px;
-  border-radius: 999px;
-  background:
-    linear-gradient(rgba(8, 14, 20, .13), rgba(8, 14, 20, .13)),
-    var(--glass);
+/* 两段式：上面搜索条，下面引擎行。宽度 / 高度 / 圆角 / 字号全走变量，
+   设置弹窗里的滑杆改一个值，画布和预览同时变 */
+.w-search .w-body {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+}
+
+.search,
+.search-dock {
+  flex: none;
+  border-radius: var(--bar-r, 999px);
   border: 1px solid var(--glass-brd);
   box-shadow: var(--shadow), inset 0 1px 0 var(--glass-hi);
   backdrop-filter: blur(18px) saturate(150%);
   -webkit-backdrop-filter: blur(18px) saturate(150%);
   transition: border-color .2s ease, box-shadow .2s ease;
 }
+
+.search {
+  position: relative;
+  width: var(--bar-w, 100%);
+  height: var(--bar-h, 52px);
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 5px 0 7px;
+  background:
+    linear-gradient(rgba(8, 14, 20, var(--bar-dim, .13)), rgba(8, 14, 20, var(--bar-dim, .13))),
+    var(--glass);
+}
 .search:focus-within {
   border-color: rgba(255, 255, 255, .48);
   box-shadow: var(--shadow), 0 0 0 3px rgba(255, 255, 255, .10);
 }
 
+/* 左边那颗当前引擎的图标：内嵌引擎行时只是个身份标识，浮层模式下是开关 */
+.search-eng {
+  flex: none;
+  width: calc(var(--bar-ico, 22px) + 12px);
+  height: calc(var(--bar-ico, 22px) + 12px);
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  cursor: pointer;
+  transition: background .16s ease, transform .12s ease;
+}
+.search-eng:hover { background: rgba(255, 255, 255, .14); }
+.search-eng:active { transform: scale(.94); }
+.search-eng .eng { --ico: var(--bar-ico, 22px); }
+
 .search input {
   cursor: text;
-  flex: 1; min-width: 0;
+  flex: 1;
+  min-width: 0;
   height: 100%;
-  border: 0; outline: 0; background: transparent;
-  font: inherit; font-size: 14px;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--bar-font, 14px);
   color: var(--fg);
   letter-spacing: .02em;
 }
-.search input::placeholder { color: var(--fg-faint); }
+.search input::placeholder {
+  color: var(--fg-faint);
+  font-size: var(--bar-font, 14px);
+}
 
 .search-go {
-  width: 34px; height: 34px;
   flex: none;
-  display: grid; place-items: center;
-  border: 0; border-radius: 50%;
+  width: calc(var(--bar-h, 52px) - 14px);
+  height: calc(var(--bar-h, 52px) - 14px);
+  max-width: 40px;
+  max-height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
   background: transparent;
   color: var(--fg-faint);
   cursor: pointer;
-  transition: color .18s ease;
+  transition: color .18s ease, background .16s ease;
 }
-.search-go:hover { color: var(--fg); }
-.search-go svg { width: 17px; height: 17px; }
+.search-go:hover { color: var(--fg); background: rgba(255, 255, 255, .12); }
+.search-go svg { width: 60%; height: 60%; }
+
+/* ---- 引擎行 ---- */
+
+.search-dock {
+  width: var(--bar-w, 100%);
+  height: var(--dock-h, 44px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  padding: 0 5px;
+  border-radius: var(--dock-r, 999px);
+  background:
+    linear-gradient(rgba(8, 14, 20, var(--bar-dim, .13)), rgba(8, 14, 20, var(--bar-dim, .13))),
+    var(--glass);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.search-dock::-webkit-scrollbar { display: none; }
+
+.dock-item {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 3px 12px;
+  border: 0;
+  border-radius: calc(var(--dock-h, 44px) * .30);
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 10.5px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease, transform .12s ease;
+}
+.dock-item .eng { --ico: var(--dock-ico, 20px); }
+.dock-item:hover { background: rgba(255, 255, 255, .13); color: var(--fg); }
+.dock-item:active { transform: scale(.95); }
+.dock-item.is-active { background: rgba(255, 255, 255, .19); color: var(--fg); }
+
+.dock-name {
+  max-width: 62px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 引擎图标：拿到真图就显示真图，拿不到就退成品牌色字母块 */
+.eng {
+  width: var(--ico, 20px);
+  height: var(--ico, 20px);
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 26%;
+  overflow: hidden;
+}
+.eng img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+.eng.is-letter {
+  background: var(--eng, #5b6472);
+  color: #fff;
+  font-weight: 600;
+  font-size: calc(var(--ico, 20px) * .58);
+  line-height: 1;
+  text-shadow: none;
+}
+.eng.is-letter::before { content: attr(data-letter); }
+/* 图还没回来（或根本回不来）时只显示字母块，别留一块空白 */
+.eng.is-letter img { display: none; }
+
+.eng-plus {
+  position: relative;
+  background: rgba(255, 255, 255, .18);
+  color: var(--fg);
+  font-size: calc(var(--ico, 20px) * .78);
+  font-weight: 300;
+  line-height: 1;
+}
+
+/* ---- 放不下引擎行时：收成浮层，点引擎图标再弹 ---- */
+
+.w-search.is-float .search-dock {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + var(--bar-h, 52px) / 2 + 8px);
+  width: max(var(--bar-w, 100%), 320px);
+  max-width: 92vw;
+  padding: 0 8px;
+  transform: translate(-50%, -6px) scale(.98);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 40;
+  transition: opacity .16s ease, transform .18s cubic-bezier(.22, .61, .36, 1);
+}
+.w-search.is-float.is-up .search-dock {
+  top: auto;
+  bottom: calc(50% + var(--bar-h, 52px) / 2 + 8px);
+  transform: translate(-50%, 6px) scale(.98);
+}
+.w-search.is-float.is-picking .search-dock {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, 0) scale(1);
+}
 
 /* ---------------- 站点方块（每块独立） ---------------- */
 
@@ -383,12 +1088,17 @@ body.is-dragging .widget:not(.dragging) {
 .w-link .tile:hover .ico { box-shadow: 0 10px 26px rgba(20, 26, 32, .26), inset 0 0 0 1px rgba(255, 255, 255, .2); }
 
 .w-link .ico img {
-  width: 100%;
-  height: 100%;
+  /* 图片层尺寸跟 --logo 走，容器跟 --ico 走：
+     「Logo 大小」压的是图里的图案，不是图标这块板子 */
+  width: var(--logo, 100%);
+  height: var(--logo, 100%);
   max-width: 100%;
   max-height: 100%;
   object-fit: contain;
   display: block;
+  /* 图片自带留白时，由脚本量出内容边界后用这两个变量把内容撑满；
+     没有留白（--fit 缺省 1）就完全不动 */
+  transform: translate(var(--fit-dx, 0%), var(--fit-dy, 0%)) scale(var(--fit, 1));
 }
 
 .w-link .ico .letter {
@@ -464,9 +1174,10 @@ body.is-dragging .widget:not(.dragging) {
 }
 .w-link.is-square .tile:hover .name { color: var(--label-fg, #fff); }
 
-/* ---- 1×1：白色应用图标铺满整格，名称是挂在方块外面的独立标签 ----
-   图标不再给名称让位（白色图标的白色底就是整块），名称也不参与图标的裁剪；
-   行距 GAP_Y 更大，标签正好落在两行之间的空隙里 */
+/* ---- 1×1：图标就是整块方块，名称是挂在方块外面的独立标签 ----
+   底板保持透明：favicon 的圆角通常是透明的，白色底板会从圆角和抗锯齿
+   边缘透出来，就是那圈「白色像素」。透明之后边缘直接融进壁纸。
+   透明的字形图标（蓝鲸那种）也跟着壁纸走，不再被硬塞一块白砖。 */
 .w-link.is-unit .tile {
   padding: 0;
   gap: 0;
@@ -474,16 +1185,32 @@ body.is-dragging .widget:not(.dragging) {
   border-radius: var(--ico-r, 24%);
 }
 .w-link.is-unit .ico {
-  width: 100%;
-  height: 100%;
+  width: var(--ico, 100%);
+  height: var(--ico, 100%);
   border-radius: var(--ico-r, 24%);
+  background: transparent;
+  box-shadow: none;
+  /* 阴影要贴着图标轮廓走，不能是容器的圆角盒子。
+     裁切（overflow: hidden）只影响内容绘制，不影响自身 filter 的投影输出 */
+  filter: drop-shadow(0 4px 10px rgba(8, 14, 22, .30));
+}
+.w-link.is-unit .ico img {
+  border-radius: var(--ico-r, 24%);
+  /* 默认一点不裁。有的站点把 logo 做成「浅色描边 + 品牌色图形」，那圈描边铺在
+     壁纸上就是一圈白框（是图里带的，不是我们画的）；脚本量到「四条边都有宽度
+     一致、都不超过 6% 的浅色边」时才把 --icon-trim 设上去，正好落在白框上。
+     满幅的 logo、白底卡片一律不裁，免得把图形切掉一角 */
+  clip-path: inset(var(--icon-trim, 0%) round var(--ico-r, 24%));
 }
 /* 整块就是图标，悬停时不再整体上浮，只让图标阴影抬起 */
 .w-link.is-unit .tile:hover { background: transparent; transform: none; }
 .w-link.is-unit .tile:hover .ico { transform: none; }
+/* 垫了底色时，底板永远是整格、不会跟着图案缩，名称就别再往上收 —— 收上去就压色块上 */
+.w-link.is-unit.has-tone .name { top: calc(100% + 3px); }
 .w-link.is-unit .name {
   position: absolute;
-  top: calc(100% + 3px);
+  /* 图标缩小（图标大小 < 100%）时 --label-drop 会把它往上收，贴着图标 */
+  top: calc(100% - var(--label-drop, 0px) + 3px);
   left: 50%;
   right: auto;
   transform: translateX(-50%);
@@ -497,6 +1224,17 @@ body.is-dragging .widget:not(.dragging) {
   text-overflow: ellipsis;
   pointer-events: auto;
   z-index: 3;
+}
+
+/* ---- 1×1 也可以给图标本身垫底色 ----
+   有些 favicon 是半透明的，直接铺在壁纸上会糊成一片；垫一层色就清楚了。
+   底色画在「图标那一块」上（跟着「图标大小」一起缩），圆角与图标同源，
+   没自定义底色时保持透明，跟以前一样直接融进壁纸 */
+.w-link.is-unit.has-tone .ico {
+  background: var(--tone-bg, transparent);
+  /* 底色块自己有条 box-shadow，再叠一层 drop-shadow 会变成双层阴影 */
+  box-shadow: 0 6px 18px rgba(8, 14, 22, .28);
+  filter: none;
 }
 
 /* ---- 非 1×1 的块：整块铺一层圆角矩形底板 ----
@@ -538,6 +1276,24 @@ body.is-dragging .widget:not(.dragging) {
 /* 大块里的名称要离底板边缘有点余量，否则长名字会顶到框线 */
 .w-link.is-square.is-plate .name { max-width: 100%; padding: 0 10px; }
 .w-link.is-plate .tile:hover .name { color: var(--label-fg, #fff); }
+
+/* ---- 单块自定义底色（右键「编辑外观」）----
+   只在 has-tone 时接管底板；没自定义的块继续走壁纸 token，互不影响 */
+.w-link.is-plate.has-tone::before {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .18) 0%, rgba(255, 255, 255, 0) 46%),
+    var(--tone-bg, rgba(255, 255, 255, .13));
+  border-color: rgba(255, 255, 255, .22);
+}
+.w-link.is-plate.has-tone:hover::before {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, .30) 0%, rgba(255, 255, 255, 0) 46%),
+    var(--tone-bg, rgba(255, 255, 255, .13));
+  border-color: rgba(255, 255, 255, .34);
+}
+/* 自定义字色时不再叠壁纸的投影，否则浅底上的深字会发脏 */
+.w-link.is-plate.has-tone .name,
+.w-link.is-plate.has-tone .tile:hover .name { text-shadow: none; }
 
 /* ---------------- 引语部件 ---------------- */
 
@@ -621,6 +1377,42 @@ body.is-dragging .widget:not(.dragging) {
 .hint.show { opacity: 1; transform: translate(-50%, 0); }
 
 /* ---------------- 右键菜单 ---------------- */
+
+/* ---------------- 二级菜单 ---------------- */
+
+.ctx-sub {
+  /* 必须挂在 body 下、用 fixed：嵌在 .ctxmenu 里的话，父级的 backdrop-filter
+     会把它变成新的 backdrop root，模糊取不到页面，46% 的底色就会透出桌面图标 */
+  position: fixed;
+  z-index: 61;
+  min-width: 208px;
+  max-width: 300px;
+  padding: 5px;
+  border-radius: 12px;
+  background: var(--panel);
+  border: 1px solid var(--panel-brd);
+  backdrop-filter: blur(30px) saturate(160%);
+  -webkit-backdrop-filter: blur(30px) saturate(160%);
+  box-shadow: 0 18px 46px rgba(8, 10, 14, .42), inset 0 1px 0 rgba(255, 255, 255, .06);
+}
+.ctx-sub .ctx-item { height: 32px; }
+/* 说明文字不许把面板撑破，也不许被面板边缘切一半 */
+.ctx-sub .ctx-hint {
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ctx-item.is-sub .ctx-chev {
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  color: var(--fg-faint);
+}
+.ctx-item.is-sub .ctx-chev svg { width: 100%; height: 100%; }
+.ctx-item.is-sub.is-open { background: rgba(255, 255, 255, .13); }
 
 .ctxmenu {
   position: fixed;
@@ -763,7 +1555,7 @@ body.is-dragging .widget:not(.dragging) {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 16px;
+  margin-bottom: 13px;
 }
 .dlg-head h3 { margin: 0; }
 
@@ -777,7 +1569,12 @@ body.is-dragging .widget:not(.dragging) {
 }
 .dlg-x:hover { background: var(--hover); color: var(--fg); }
 
-.dlg-field { margin-bottom: 14px; }
+.dlg-field { margin-bottom: 12px; }
+
+/* 并排两个字段（网址 + 名称），省下一行高度 */
+.dlg-row { display: flex; gap: 12px; }
+.dlg-row > .dlg-field { flex: 1; min-width: 0; margin-bottom: 0; }
+.dlg-row > .dlg-field:first-child { flex: 1.55; }
 
 .dlg-label {
   display: block;
@@ -873,14 +1670,33 @@ body.is-dragging .widget:not(.dragging) {
 .dlg-icon {
   width: min(660px, 94vw);
   max-height: 88vh;
-  overflow-y: auto;
-  padding: 22px;
+  display: flex;
+  flex-direction: column;
+  padding: 22px 22px 0;
   border-radius: 20px;
+  overflow: hidden;
+}
+
+/* 中间滚动，底部按钮常驻 */
+.dlg-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 6px 0;
+  margin-right: -6px;
+  scrollbar-width: thin;
+}
+.dlg-body > .dlg-box:last-child { margin-bottom: 4px; }
+.dlg-icon .dlg-foot {
+  margin-top: 0;
+  padding: 14px 0 18px;
+  border-top: 1px solid var(--panel-brd);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0) 0%, rgba(0, 0, 0, .10) 100%);
 }
 
 .dlg-box {
-  padding: 16px;
-  margin-bottom: 14px;
+  padding: 14px;
+  margin-bottom: 11px;
   border-radius: 14px;
   border: 1px solid var(--panel-brd);
   background: rgba(255, 255, 255, .03);
@@ -890,8 +1706,9 @@ body.is-dragging .widget:not(.dragging) {
   display: flex;
   align-items: flex-start;
   gap: 16px;
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
+.di-up-hint { margin: -2px 0 10px; }
 
 .di-prev {
   display: flex;
@@ -916,7 +1733,9 @@ body.is-dragging .widget:not(.dragging) {
   overflow: visible;
   transition: box-shadow .16s ease, border-color .16s ease;
 }
-.di-prev-ico img { width: 100%; height: 100%; object-fit: cover; border-radius: 21px; display: block; }
+/* 缩略图要和真实显示一致：真实是按 contain 放进格子里的，
+   这里用 cover 会裁掉留白，看起来「图标是满的」，实际放到桌面上却变小了 */
+.di-prev-ico img { width: 100%; height: 100%; object-fit: contain; border-radius: 21px; display: block; }
 .di-prev-ico .ctx-ico { color: var(--fg-faint); }
 .di-prev-ico .ctx-ico svg { width: 22px; height: 22px; }
 
@@ -938,6 +1757,8 @@ body.is-dragging .widget:not(.dragging) {
 }
 
 .di-prev-label { font-size: 12px; }
+/* .di-prev 自带 display:flex，会盖掉 [hidden] 的 display:none */
+.di-prev[hidden] { display: none; }
 
 .di-prev-ico.is-loading {
   animation: prevPulse .9s ease-in-out infinite;
@@ -977,6 +1798,370 @@ body.is-dragging .widget:not(.dragging) {
 }
 .di-color:hover { transform: scale(1.12); }
 .di-color.is-active { box-shadow: 0 0 0 2px var(--fg); transform: scale(1.12); }
+
+/* ---------------- 调整图片（裁剪 / 缩放） ----------------
+   和主弹窗同一个位置翻页：左边棋盘格台面（拖 / 滚轮缩放），
+   右边两档裁切方式 + 缩放滑杆 + 尺寸读数。 */
+.crop-dlg { padding-bottom: 0; }
+.crop-dlg[hidden] { display: none; }
+/* 裁剪要看清边缘：把面板背后那层再压暗一档（只动透过来的背景，不动面板颜色，
+   浅色主题也不会被染黑） */
+.crop-dlg {
+  backdrop-filter: blur(40px) saturate(150%) brightness(.62);
+  -webkit-backdrop-filter: blur(40px) saturate(150%) brightness(.62);
+}
+/* 画布本身也压暗，别让五颜六色的图标透出来 */
+.dialog-scrim.is-crop { background: rgba(8, 10, 14, .66); }
+
+.crop-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  gap: 22px;
+  align-items: stretch;
+  padding-top: 2px;
+}
+
+.crop-stage {
+  position: relative;
+  flex: none;
+  border-radius: 16px;
+  border: 1px solid var(--input-brd);
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  /* 棋盘格：哪里是透明的，一眼看得出来 */
+  background-color: rgba(255, 255, 255, .05);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, .05) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, .05) 75%),
+    linear-gradient(45deg, rgba(255, 255, 255, .05) 25%, transparent 25%, transparent 75%, rgba(255, 255, 255, .05) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 8px 8px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .10);
+}
+.crop-stage.is-grabbing { cursor: grabbing; }
+.crop-stage canvas { display: block; width: 100%; height: 100%; }
+
+/* 三分线：只做参考，不挡鼠标 */
+.crop-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(255, 255, 255, .16) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, .16) 1px, transparent 1px);
+  background-size: 33.3333% 33.3333%;
+}
+
+.crop-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.crop-side .dlg-field { margin-bottom: 0; }
+
+.crop-chips { display: flex; gap: 8px; }
+.crop-chip {
+  height: 30px;
+  padding: 0 15px;
+  border-radius: 8px;
+  border: 1px solid var(--input-brd);
+  background: var(--input-bg);
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--fg-dim);
+  cursor: pointer;
+  transition: color .14s ease, border-color .14s ease, background-color .14s ease;
+}
+.crop-chip:hover { color: var(--fg); }
+.crop-chip.is-active {
+  color: var(--fg);
+  border-color: var(--fg-faint);
+  background: rgba(255, 255, 255, .16);
+}
+
+.crop-row { display: flex; gap: 8px; }
+.crop-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-faint, var(--fg-dim));
+}
+.crop-src {
+  margin: auto 0 0;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 640px) {
+  .crop-body { flex-direction: column; }
+}
+
+/* ---------------- 外观（编辑图标与外观里的预览与色板） ---------------- */
+
+.di-sec {
+  margin-bottom: 10px;
+  font-size: 11px;
+  letter-spacing: .12em;
+  color: var(--fg-faint, var(--fg-dim));
+  text-transform: uppercase;
+}
+
+/* ---------------- 搜索框设置弹窗 ---------------- */
+
+.sp-dlg { width: min(560px, 94vw); }
+
+/* 预览：舞台尺寸 = 真实槽位等比缩小后的尺寸，克隆出来的搜索框按真实像素摆好再整体缩放 */
+.sp-stage {
+  position: relative;
+  margin: 2px auto 14px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--bg-grad);
+  box-shadow: inset 0 0 0 1px var(--glass-brd);
+}
+.sp-pv {
+  position: absolute !important;
+  left: 0 !important;
+  top: 0 !important;
+  transform-origin: 0 0;
+  pointer-events: none;
+  transition: none !important;
+}
+
+.dlg-seg { display: flex; gap: 6px; justify-content: flex-start; flex-wrap: wrap; }
+.dlg-seg .seg { flex: 0 0 auto; min-width: 62px; padding: 6px 14px; }
+
+/* 尺寸 + 外形并排 */
+.sp-cols { display: flex; gap: 11px; align-items: stretch; }
+.sp-cols > .dlg-box { flex: 1; min-width: 0; margin-bottom: 11px; }
+.sp-cols .dlg-hint { font-size: 11.5px; line-height: 1.55; }
+
+.sp-engines {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.sp-eng {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 5px 8px;
+  border-radius: 9px;
+  background: var(--input-bg);
+  border: 1px solid transparent;
+}
+.sp-eng.is-active {
+  border-color: rgba(255, 255, 255, .26);
+  background: rgba(255, 255, 255, .14);
+}
+.sp-eng .eng { --ico: 20px; }
+.sp-eng-name {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sp-eng-use {
+  flex: none;
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 9px;
+  background: rgba(255, 255, 255, .12);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.sp-eng-use:hover { background: rgba(255, 255, 255, .2); color: var(--fg); }
+.sp-eng.is-active .sp-eng-use {
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: default;
+}
+.sp-eng-del {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-faint);
+  cursor: pointer;
+}
+.sp-eng-del:hover { background: rgba(255, 255, 255, .14); color: var(--fg); }
+.sp-eng-del svg { width: 13px; height: 13px; }
+
+.seg-add { color: var(--fg-dim); }
+
+/* 预览就是这块方块本人：克隆画布上的真实 DOM，按真实像素排好，
+   装不下才整体等比缩小。所以这里没有任何「示意用」的固定数值 ——
+   圆角、间距、底色、阴影、字号全部来自画布那一份，不会和实际渲染漂开。 */
+.di-look-body {
+  display: flex;
+  gap: 18px;
+  align-items: center;
+}
+.pv-cell { flex: none; width: 156px; }
+
+.pv {
+  border-radius: 14px;
+  border: 1px solid var(--input-brd);
+  overflow: hidden;
+}
+
+.pv-stage {
+  height: 150px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  /* 垫上和画布同一份壁纸渐变：白字、玻璃底板、投影都在真实底色上判断 */
+  background: var(--bg-grad);
+}
+
+.pv-scale {
+  position: relative;
+  flex: none;
+  transform-origin: center center;
+}
+
+/* 预览不是可点的东西：不要悬停上浮，也不要过渡动画（拖滑杆时要跟手） */
+.pv-stage .w-link,
+.pv-stage .w-link *,
+.pv-stage .w-link::before {
+  transition: none !important;
+  animation: none !important;
+}
+.pv-stage .w-link * { pointer-events: none; }
+
+.pv-cap {
+  margin: 7px 0 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  text-align: center;
+  color: var(--fg-faint, var(--fg-dim));
+}
+
+.di-look-fields { flex: 1; min-width: 0; }
+.dlg-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--fg-faint, var(--fg-dim));
+}
+.di-look-fields .dlg-field:last-child { margin-bottom: 0; }
+/* Logo 大小的说明：和外层底色 / 名称颜色之间留一口气 */
+.di-zoom-hint { margin: 2px 0 12px; }
+
+@media (max-width: 640px) {
+  .di-look-body { flex-direction: column; align-items: stretch; }
+  .pv-cell { width: 100%; }
+  .pv-stage { height: 132px; }
+}
+
+.tone-colors { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+
+.tone-auto {
+  height: 24px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: rgba(255, 255, 255, .07);
+  border: 1px solid rgba(255, 255, 255, .16);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: color .14s ease, border-color .14s ease, background-color .14s ease;
+}
+.tone-auto:hover { color: var(--fg); }
+.tone-auto.is-active {
+  color: var(--fg);
+  border-color: var(--fg-dim);
+  background: rgba(255, 255, 255, .14);
+}
+
+/* 「从图标取色」不是选颜色，是一个动作：虚线边 + 吸管小圆点，和色板区分开 */
+.tone-pick {
+  height: 24px;
+  padding: 0 9px 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--fg-dim);
+  background: transparent;
+  border: 1px dashed rgba(255, 255, 255, .26);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: color .14s ease, border-color .14s ease;
+}
+.tone-pick::before {
+  content: "";
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: conic-gradient(#f26b6b, #f2b93b, #7bd07b, #4aa8e0, #9a7be0, #f26b6b);
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, .18);
+}
+.tone-pick:hover { color: var(--fg); border-color: var(--fg-dim); }
+.tone-pick:disabled { opacity: .6; cursor: default; }
+
+/* 取出来的颜色跟在色板下面，和「选颜色」是同一排视觉 */
+.di-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin-top: 9px;
+}
+.di-pick[hidden] { display: none; }
+.tone-pick-sm { height: 22px; font-size: 10.5px; padding: 0 8px 0 7px; }
+.di-pick-tip {
+  margin-top: 7px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-faint, var(--fg-dim));
+}
+.di-pick-tip[hidden] { display: none; }
+.di-pick-cap {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--fg-faint, var(--fg-dim));
+}
+
+.di-color.tone-custom {
+  display: block;
+  position: relative;
+  overflow: hidden;
+  background: conic-gradient(from 200deg, #f26b6b, #f2b93b, #7bd07b, #4aa8e0, #9a7be0, #f26b6b);
+}
+.di-color.tone-custom input {
+  position: absolute;
+  left: -10px; top: -10px;
+  width: 46px; height: 46px;
+  padding: 0; border: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.dlg-icon .text-btn { margin-top: 6px; color: var(--fg-dim); }
+.dlg-icon .text-btn:hover { color: var(--fg); }
+.dlg-icon .dlg-foot .tone-reset {
+  margin-right: auto;
+  height: 34px;
+  padding: 0 10px;
+}
 
 /* ---------------- 本地搜索 ---------------- */
 

@@ -4,12 +4,19 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SudaTab</title>
-<link rel="stylesheet" href="styles.css?v=20261107d">
+<!-- 页面自己的图标：不开这一行时，标签栏里只有一个通用地球（扩展页在
+     Edge 的垂直标签栏里也一样），看不到标志 -->
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/icon32.png">
+<link rel="icon" type="image/png" sizes="128x128" href="icons/icon128.png">
+<link rel="apple-touch-icon" href="icons/icon128.png">
+<link rel="stylesheet" href="styles.css?v=20261110c">
 </head>
 <body data-bg="aurora">
 
 <div class="bg" aria-hidden="true">
   <div class="bg-grad"></div>
+  <div class="bg-photo" id="bgPhoto"></div>
   <svg class="bg-waves" viewBox="0 0 1440 900" preserveAspectRatio="xMidYMid slice">
     <defs>
       <linearGradient id="wA" x1="0" y1="0" x2="1" y2="0.6">
@@ -84,6 +91,14 @@
     <section class="field">
       <div class="field-head"><span class="label">背景</span></div>
       <div class="swatches" id="bgSwatches"></div>
+
+      <div class="bing-head">
+        <span class="label">Bing 每日</span>
+        <button type="button" class="bing-more" id="bingMore">换一批</button>
+      </div>
+      <div class="bing-grid" id="bingGrid">
+        <div class="bing-hint">正在取 Bing 壁纸…</div>
+      </div>
     </section>
 
     <section class="field">
@@ -96,8 +111,9 @@
         <span class="label">网格密度</span>
         <span class="field-tag" id="densityHint"></span>
       </div>
-      <div class="segmented" id="densitySeg"></div>
-      <p class="field-note">列数越少，每个方块越大。调整后站点方块会自动重新排列。</p>
+      <div class="tunings" id="densitySeg"></div>
+      <p class="field-note">列数越少，每个方块越大（1×1 始终是正方形）；最多 64 列，
+        大屏也不用挤。调整后站点方块会自动重新排列。</p>
     </section>
 
     <section class="field">
@@ -133,6 +149,6 @@
   </div>
 </aside>
 
-<script src="app.js?v=20261107d"></script>
+<script src="app.js?v=20261110c"></script>
 </body>
 </html>

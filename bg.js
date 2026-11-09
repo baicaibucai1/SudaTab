@@ -50,3 +50,9 @@ chrome.runtime.onMessage.addListener((msg, sender, send) => {
   });
   return true;   /* 异步回复 */
 });
+
+/* 工具栏按钮：点一下开一个新标签页（会被本扩展的 newtab 接管）。
+   有这个按钮，扩展栏里才有自己的标志，不然只能看到一个通用地球。 */
+chrome.action.onClicked.addListener(() => {
+  chrome.tabs.create({});
+});

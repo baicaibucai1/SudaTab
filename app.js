@@ -28,11 +28,15 @@
     /* 1×1 的图标不一定要把图案铺满整格：抓来的 favicon 常常自带留白，
        缩一点反而更整齐。缩的是图里那层图案，底板和格子始终不动。
        100% = 图案铺满（默认）。 */
-    { key: 'iconScale',  name: 'Logo 大小', min: 0.6,  max: 1,   step: 0.02, unit: '%',  def: 1 },
+    { key: 'iconScale',  name: '图标大小', min: 0.6,  max: 1,   step: 0.02, unit: '%',  def: 1 },
     { key: 'labelScale', name: '图标字号', min: 0.75, max: 1.6, step: 0.05, unit: '×',  def: 1 }
   ];
 
-  var DENSITIES = [16, 24, 32, 40];
+  /* 网格密度改成连续可调：大屏 40 列根本不够用，上限放到 64。
+     列数越少格越大；1×1 始终是正方形，所以行高由列宽反推 */
+  var COLS_MIN = 12;
+  var COLS_MAX = 64;
+  var COLS_STEP = 2;
 
   var UNIT_W = 2;   /* 一个方块宽 = 2 列 */
   var UNIT_H = 3;   /* 一个方块高 = 3 行（行高由列宽推导，保证正方） */
@@ -278,7 +282,8 @@
     items.push({ id: 'quote', type: 'quote', x: 6, y: 17, w: 12, h: 1, text: DEFAULT_QUOTE });
 
     return {
-      bg: 'aurora', engine: 'bing', myEngines: [], cols: 24, locked: false, tipShown: false,
+      bg: 'aurora', bgPhoto: null, engine: 'bing', myEngines: [], cols: 24,
+      locked: false, tipShown: false,
       gapX: TUNE.gapX, gapY: TUNE.gapY,
       radius: TUNE.radius, iconScale: TUNE.iconScale, labelScale: TUNE.labelScale,
       items: items
@@ -376,6 +381,23 @@
     });
   }
 
+  /* 照片壁纸只认 Bing 的图片地址，别让存档里塞进奇怪的东西 */
+  function cleanBgPhoto(p) {
+    if (!p || typeof p !== 'object') { return null; }
+    var PREFIX = 'https://www.bing.com/th?';
+    var ok = function (u) { return typeof u === 'string' && u.indexOf(PREFIX) === 0; };
+    var full = String(p.full || '');
+    if (!ok(full)) { return null; }
+    var thumb = String(p.thumb || '');
+    if (!ok(thumb)) { thumb = full; }
+    return {
+      id: String(p.id || full).slice(0, 80),
+      full: full,
+      thumb: thumb,
+      title: String(p.title || '').slice(0, 46)
+    };
+  }
+
   function normalizeState(s) {
     var d = defaultState();
     if (!s || typeof s !== 'object') { return d; }
@@ -436,9 +458,10 @@
 
     return {
       bg: BACKGROUNDS.some(function (b) { return b.id === s.bg; }) ? s.bg : d.bg,
+      bgPhoto: cleanBgPhoto(s.bgPhoto),
       engine: engIds.indexOf(s.engine) >= 0 ? s.engine : d.engine,
       myEngines: my,
-      cols: DENSITIES.indexOf(s.cols) >= 0 ? s.cols : d.cols,
+      cols: Math.round(tuneNum(s.cols, d.cols, COLS_MIN, COLS_MAX)),
       locked: !!s.locked,
       tipShown: !!s.tipShown,
       gapX: tuneNum(s.gapX, TUNE.gapX, 6, 32),
@@ -494,6 +517,7 @@
   function serializeState() {
     return {
       bg: state.bg,
+      bgPhoto: state.bgPhoto || null,
       engine: state.engine,
       myEngines: (state.myEngines || []).map(function (e) {
         return { name: e.name, tpl: e.tpl, color: e.color };
@@ -590,6 +614,9 @@
   var drawer = document.getElementById('drawer');
   var scrim = document.getElementById('scrim');
   var elSwatches = document.getElementById('bgSwatches');
+  var elBgPhoto = document.getElementById('bgPhoto');
+  var elBingGrid = document.getElementById('bingGrid');
+  var elBingMore = document.getElementById('bingMore');
   var elSeg = document.getElementById('engineSeg');
   var elRows = document.getElementById('linkRows');
   var elDensity = document.getElementById('densitySeg');
@@ -610,7 +637,7 @@
 
     var colW = (W - gapX * (COLS - 1)) / COLS;
 
-    /* 极端密度下（40 列 + 大间距）间距会把格子本身吃光：
+    /* 极端密度下（64 列 + 大间距）间距会把格子本身吃光：
        按「1×1 必须还是正方」解出间距上限，回收一次再算 */
     var rowH = (2 * colW - gapX) / 3;
     if (rowH < 6 && COLS > 1) {
@@ -1422,6 +1449,18 @@
       var isField = t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA');
       if (isField && document.activeElement === t) { return; }
 
+      /* 组件的右下角是「改大小」而不是「移动整块」。
+         站点图标不给这个热区 —— 图标只能整格，拖出半格就和邻居错位了。 */
+      if (item.type !== 'link') {
+        var box = el.getBoundingClientRect();
+        var pad = Math.min(22, Math.max(14, Math.round(box.width * 0.18)));
+        if (e.clientX >= box.right - pad && e.clientY >= box.bottom - pad) {
+          e.preventDefault();
+          startResize(item, e);
+          return;
+        }
+      }
+
       startDrag(e, item);
     });
 
@@ -1430,7 +1469,72 @@
       showWidgetMenu(item, e.clientX, e.clientY);
     });
 
+    /* 组件右下角的尺寸柄（纯视觉，命中在上面按坐标算）。
+       站点图标没有 —— 图标只站整格，不需要自己拖大小。 */
+    if (item.type !== 'link') {
+      var grip = document.createElement('span');
+      grip.className = 'w-grip';
+      grip.setAttribute('aria-hidden', 'true');
+      el.appendChild(grip);
+      item.grip = grip;
+    }
+
     return item;
+  }
+
+  /* 拖右下角改尺寸：过程中只动视觉框（跟手），松手再走 applySize 做挤入校验。
+     只给组件用（时钟 / 搜索 / 引语 / 天气 / 待办 / 月历），图标走固定档位。 */
+  function startResize(item, down) {
+    var m = metrics();
+    var min = MIN_SIZE[item.type] || { w: 2, h: 1 };
+    var el = item.el;
+    var x0 = down.clientX, y0 = down.clientY;
+    var w0 = item.w, h0 = item.h;
+    var nw = w0, nh = h0;
+    var moved = false;
+
+    el.classList.add('is-resizing');
+    document.body.classList.add('is-resizing');
+    /* 不要 setPointerCapture 到 grip：它 pointer-events:none，
+       捕获之后 pointermove 全被重定向过去，window 上的监听一个也收不到 */
+
+    function move(e) {
+      var dw = Math.round((e.clientX - x0) / m.stepX);
+      var dh = Math.round((e.clientY - y0) / m.stepY);
+      /* 上限至少给到原宽：贴右边界的块 COLS - x 可能比现有宽度还小，
+         直接 clamp 会把「想拉宽」变成「反而被压窄」 */
+      nw = clamp(w0 + dw, min.w, Math.max(w0, COLS - item.x));
+      nh = clamp(h0 + dh, min.h, 60);
+      if (nw === w0 && nh === h0) { return; }
+      moved = true;
+      el.style.width = (nw * m.stepX - m.gapX) + 'px';
+      el.style.height = (nh * m.stepY - m.rowGap) + 'px';
+      if (item.fit) {
+        item.fit({ width: nw * m.stepX - m.gapX, height: nh * m.stepY - m.rowGap });
+      }
+    }
+
+    function up() {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
+      el.classList.remove('is-resizing');
+      document.body.classList.remove('is-resizing');
+
+      /* 不要先把内联宽高清空：applySize 有可能失败（周围挤不下），
+         那时内联值一清，块会塌成内容宽。统一交给 layoutAll 收尾 */
+      if (moved && (nw !== w0 || nh !== h0)) {
+        /* 拉到超出画布时先把画布撑长，否则 plan 找不到位置、直接拒绝 */
+        var needRows = item.y + nh + 2;
+        if (needRows > BASE_ROWS) { BASE_ROWS = needRows; }
+        applySize(item, nw, nh);
+      }
+      layoutAll();      /* 成功是幂等的，失败时把真实几何摆回去 */
+    }
+
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
   }
 
   /* 阻断拖动结束后浏览器补发的那一次 click（避免误开链接） */
@@ -2614,7 +2718,7 @@
     /* 单块字号只对底板方块开放：1×1 的名称挂在方块外面、正好住在行与行的空隙里，
        单独放大会直接压到下一行（实测 1.8× 会压 6px），所以它跟着全局「图标字号」走 */
     var fs = unit ? 1 : (opt.fs == null ? itemFontScale(it) : opt.fs);
-    /* 这一块里图案的缩放（弹窗里的「Logo 大小」），再叠上全局那个 */
+    /* 这一块里图案的缩放（单图标弹窗里的「Logo 大小」），再叠上全局的「图标大小」 */
     var zoom = opt.zoom == null ? itemZoom(it) : opt.zoom;
 
     var ico, labelSize;
@@ -2623,7 +2727,7 @@
 
     if (square) {
       if (unit) {
-        /* 1×1：底板永远占满整格，只有里面的图案按「Logo 大小」缩；
+        /* 1×1：底板永远占满整格，只有里面的图案按「图标大小」缩；
            名称交给 CSS 定位到方块外面，不和图标抢高度，也就不会被裁掉 */
         ico = s;
         logoBase = s * iconScaleValue();
@@ -2666,7 +2770,7 @@
       plateR: plate
         ? Math.round(clamp(s * (tuneNum(state.radius, TUNE.radius, 0, 50) / 100 * 0.72), 0, s * 0.5))
         : 0,
-      /* 1×1 的名称挂在方块下面：只有全局「Logo 大小」把图案缩小时才往上收一点，
+      /* 1×1 的名称挂在方块下面：只有全局「图标大小」把图案缩小时才往上收一点，
          单块 Logo 缩放不动底板，名称也就不跟着跳 */
       drop: unit ? Math.round((s - logoBase) / 2) : 0,
       maxW: unit
@@ -2688,7 +2792,7 @@
       el.style.setProperty('--label', p.labelH + 'px');
     }
     el.style.setProperty('--ico', p.icoPx + 'px');
-    /* 图片层比容器小多少，就是「Logo 大小」压了多少 */
+    /* 图片层比容器小多少，就是「图标大小」压了多少 */
     el.style.setProperty('--logo', p.logoPx + 'px');
     el.style.setProperty('--label-drop', p.drop + 'px');
 
@@ -2823,12 +2927,23 @@
     if (!el) { return; }
     var on = !!lk.cardBg && lk.cardAlpha > 0;
     el.classList.toggle('has-card', on);
+    el.classList.remove('is-dark-card', 'is-light-card');
     if (!on) { return; }
+
     var c = hexRgb(lk.cardBg);
     el.style.setProperty('--card-bg', 'rgba(' + c[0] + ',' + c[1] + ',' + c[2] + ',' +
       (lk.cardAlpha / 100).toFixed(3) + ')');
     el.style.setProperty('--card-r', lk.cardR + 'px');
     el.classList.toggle('no-blur', !lk.cardBlur);
+
+    /* 卡面自己会改变背景亮度，文字色要跟着翻：
+       深卡配白字、亮卡配深字，否则「深底 + 主题深字」直接糊成一团。
+       用「卡面自身亮度 × 浓度 + 中间调」估实际观感，浓到 0 就不管 */
+    var lum = (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255;
+    var a = lk.cardAlpha / 100;
+    var eff = lum * a + 0.5 * (1 - a);
+    if (eff < 0.44) { el.classList.add('is-dark-card'); }
+    else if (eff > 0.74) { el.classList.add('is-light-card'); }
   }
 
   /* ---------------- 卡面设置 ---------------- */
@@ -3060,23 +3175,93 @@
     rain: '雨', snow: '雪', storm: '雷阵雨'
   };
 
-  var WX_PATHS = {
-    sun: '<circle cx="12" cy="12" r="4.2"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7"/>',
-    part: '<circle cx="9.2" cy="9" r="3"/><path d="M9.2 3.6v1.5M4.4 9H2.9M5.5 5.3L4.4 4.2"/>' +
-      '<path d="M9 19h8.6a3.1 3.1 0 0 0 .2-6.2 4.4 4.4 0 0 0-8.4 1.2A2.6 2.6 0 0 0 9 19z"/>',
-    cloud: '<path d="M7 18.4h10a3.5 3.5 0 0 0 .2-7 5 5 0 0 0-9.6 1.3A3 3 0 0 0 7 18.4z"/>',
-    rain: '<path d="M7 15.4h10a3.5 3.5 0 0 0 .2-7 5 5 0 0 0-9.6 1.3A3 3 0 0 0 7 15.4z"/>' +
-      '<path d="M9 18l-.9 2.2M13 18l-.9 2.2M17 18l-.9 2.2"/>',
-    snow: '<path d="M7 15.4h10a3.5 3.5 0 0 0 .2-7 5 5 0 0 0-9.6 1.3A3 3 0 0 0 7 15.4z"/>' +
-      '<path d="M9.3 18.4v2.4M8.3 19l2 1.2M10.3 19l-2 1.2M15 18.4v2.4M14 19l2 1.2M16 19l-2 1.2"/>',
-    storm: '<path d="M7 14.4h10a3.5 3.5 0 0 0 .2-7 5 5 0 0 0-9.6 1.3A3 3 0 0 0 7 14.4z"/>' +
-      '<path d="M12.7 16.2l-2.3 3.4h2.4l-1 3.4 3.3-4.2h-2.4z"/>',
-    fog: '<path d="M5 9.4h14M4 13h13M6 16.6h13M8 20.2h9"/>'
+  /* 天气图标：双色（填充 + 少量描边）。原来是单色 1.5px 线稿，
+     小尺寸发虚、大尺寸发空，看着很像个占位符。
+     颜色固定不跟主题，浅色壁纸上靠 drop-shadow 与背景分开。 */
+  var WX_ART = {
+    sun: '<circle cx="12" cy="12" r="4.4" fill="#F7B733"/>' +
+      '<g stroke="#F7B733" stroke-width="1.9" stroke-linecap="round">' +
+      '<path d="M12 2.9v2.3M12 18.8v2.3M2.9 12h2.3M18.8 12h2.3' +
+      'M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></g>',
+
+    part: '<circle cx="8.7" cy="8.5" r="3" fill="#F7B733"/>' +
+      '<g stroke="#F7B733" stroke-width="1.7" stroke-linecap="round">' +
+      '<path d="M8.7 3.3v1.5M8.7 12.2v1.5M3.5 8.5h1.5M12.4 8.5h1.5"/></g>' +
+      '<path d="M7.5 19.2h9.7a3.25 3.25 0 0 0 .2-6.5 4.75 4.75 0 0 0-9 1.25A3 3 0 0 0 7.5 19.2z" ' +
+      'fill="#93A9BE"/>',
+
+    cloud: '<path d="M6.7 18.3h10.6a3.4 3.4 0 0 0 .2-6.8 4.9 4.9 0 0 0-9.3 1.3A3.1 3.1 0 0 0 6.7 18.3z" ' +
+      'fill="#93A9BE"/>',
+
+    rain: '<path d="M6.7 15.1h10.6a3.4 3.4 0 0 0 .2-6.8 4.9 4.9 0 0 0-9.3 1.3A3.1 3.1 0 0 0 6.7 15.1z" ' +
+      'fill="#93A9BE"/>' +
+      '<g fill="#4A90D9">' +
+      '<path d="M8.6 16.4c-.9 1.3-1.3 2.1-1.3 2.7a1.25 1.25 0 0 0 2.5 0c0-.6-.4-1.4-1.2-2.7z"/>' +
+      '<path d="M12 16.4c-.9 1.3-1.3 2.1-1.3 2.7a1.25 1.25 0 0 0 2.5 0c0-.6-.4-1.4-1.2-2.7z"/>' +
+      '<path d="M15.4 16.4c-.9 1.3-1.3 2.1-1.3 2.7a1.25 1.25 0 0 0 2.5 0c0-.6-.4-1.4-1.2-2.7z"/></g>',
+
+    snow: '<path d="M6.7 15.1h10.6a3.4 3.4 0 0 0 .2-6.8 4.9 4.9 0 0 0-9.3 1.3A3.1 3.1 0 0 0 6.7 15.1z" ' +
+      'fill="#93A9BE"/>' +
+      '<g stroke="#A8C9EA" stroke-width="1.5" stroke-linecap="round">' +
+      '<path d="M9 17v3.1M7.7 17.8l2.6 1.6M10.3 17.8l-2.6 1.6"/>' +
+      '<path d="M15 17v3.1M13.7 17.8l2.6 1.6M16.3 17.8l-2.6 1.6"/></g>',
+
+    storm: '<path d="M6.7 14.5h10.6a3.4 3.4 0 0 0 .2-6.8 4.9 4.9 0 0 0-9.3 1.3A3.1 3.1 0 0 0 6.7 14.5z" ' +
+      'fill="#93A9BE"/>' +
+      '<path d="M13.1 15.6l-2.9 4.2h2.4l-1 3 3.1-4.3h-2.3z" fill="#F5A623"/>',
+
+    fog: '<g stroke="#93A9BE" stroke-width="1.9" stroke-linecap="round">' +
+      '<path d="M4.4 8.6h15.2M3.2 12.4h13.8M6.4 16.2h13.4M8.8 20h9"/></g>'
   };
 
   function wxIcon(kind) {
-    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" ' +
-      'stroke-linecap="round" stroke-linejoin="round">' + (WX_PATHS[kind] || WX_PATHS.cloud) + '</svg>';
+    return '<svg viewBox="0 0 24 24" fill="none">' +
+      (WX_ART[kind] || WX_ART.cloud) + '</svg>';
+  }
+
+  /* 风向角度 → 方位（45° 一档，8 个） */
+  function windDir(deg) {
+    var names = ['北', '东北', '东', '东南', '南', '西南', '西', '西北'];
+    var i = Math.round((Number(deg) % 360) / 45) % 8;
+    return names[(i + 8) % 8] + '风';
+  }
+
+  /* 紫外线不一定是个数字，说人话更有用 */
+  function uvText(v) {
+    if (v == null) { return ''; }
+    var n = Number(v);
+    if (!isFinite(n)) { return ''; }
+    var word = n <= 2 ? '低' : n <= 5 ? '中' : n <= 7 ? '高' : n <= 10 ? '很高' : '极高';
+    return n + ' ' + word;
+  }
+
+  /* 温度 → 颜色。冷蓝 → 青 → 绿 → 黄 → 红，用在温度条和逐小时柱子上：
+     全白的条看不出「哪天冷、哪天暖」，扫一眼也没信息 */
+  function wxTempColor(t) {
+    var stops = [
+      [-12, [ 96, 165, 250]],
+      [  0, [125, 211, 252]],
+      [  8, [ 94, 234, 212]],
+      [ 16, [163, 230, 120]],
+      [ 24, [251, 191,  36]],
+      [ 32, [251, 113, 133]]
+    ];
+    var v = Number(t);
+    if (!isFinite(v)) { v = 18; }
+    if (v <= stops[0][0]) { v = stops[0][0]; }
+    var last = stops[stops.length - 1];
+    if (v >= last[0]) { v = last[0] - 0.01; }
+
+    for (var i = 1; i < stops.length; i++) {
+      if (v <= stops[i][0]) {
+        var a = stops[i - 1], b = stops[i];
+        var k = (v - a[0]) / (b[0] - a[0]);
+        return 'rgb(' + Math.round(a[1][0] + (b[1][0] - a[1][0]) * k) + ',' +
+                        Math.round(a[1][1] + (b[1][1] - a[1][1]) * k) + ',' +
+                        Math.round(a[1][2] + (b[1][2] - a[1][2]) * k) + ')';
+      }
+    }
+    return 'rgb(' + last[1].join(',') + ')';
   }
 
   function wxData(item) {
@@ -3145,12 +3330,14 @@
         return (o && typeof o === 'object') ? {
           d: (typeof o.d === 'string' && o.d ? o.d.slice(0, 2) : ''),
           hi: num(o.hi), lo: num(o.lo),
-          k: WX_NAME[o.k] ? o.k : 'cloud'
+          k: WX_NAME[o.k] ? o.k : 'cloud',
+          p: num(o.p)
         } : null;
       }).filter(function (o) { return o && o.hi != null && o.lo != null; }) : [];
       var hours = Array.isArray(c.hours) ? c.hours.slice(0, WX_HOUR_MAX).map(function (o) {
         return (o && isFinite(Number(o.t)) && isFinite(Number(o.h))) ? {
-          h: Math.round(Number(o.h)) % 24, t: Math.round(Number(o.t))
+          h: Math.round(Number(o.h)) % 24, t: Math.round(Number(o.t)),
+          p: isFinite(Number(o.p)) ? Math.round(Number(o.p)) : null
         } : null;
       }).filter(Boolean) : [];
 
@@ -3164,6 +3351,11 @@
         wind: num(c.wind),
         press: num(c.press),
         pop: num(c.pop),
+        uv: num(c.uv),
+        vis: isFinite(Number(c.vis)) ? Math.round(Number(c.vis) * 10) / 10 : null,
+        dew: num(c.dew),
+        wdir: num(c.wdir),
+        prec: isFinite(Number(c.prec)) ? Math.round(Number(c.prec) * 10) / 10 : null,
         sunr: (typeof c.sunr === 'string' ? c.sunr.slice(0, 5) : ''),
         suns: (typeof c.suns === 'string' ? c.suns.slice(0, 5) : ''),
         kind: WX_NAME[c.kind] ? c.kind : 'cloud',
@@ -3204,12 +3396,8 @@
   /* 按实际像素分档：块越小越只剩「一眼」的信息，越大越往里填内容。
      用像素而不是格数，是因为格子的实际大小会随屏幕和密度变 */
   function wxTier(w, h, opt) {
-    var layout = (opt && opt.layout) || 'auto';
-    if (layout === 'compact') {
-      /* 只看当前天气：再大也不往预报上分地方 */
-      return (h < 120 || w < 190) ? 'mini' : 'mid';
-    }
-    var full = layout === 'full';
+    /* compact 不走这里（它是一套独立排版），由 wxLayout 直接分流 */
+    var full = (opt && opt.layout) === 'full';
     if (h < (full ? 92 : 120) || w < (full ? 168 : 190)) { return 'mini'; }
     if (h < (full ? 168 : 250) || w < (full ? 300 : 360)) { return 'mid'; }
     if (h < (full ? 248 : 360)) { return 'big'; }
@@ -3288,6 +3476,8 @@
       var b = (o.hi - lo0) / span;
       fill.style.left = (a * 100).toFixed(1) + '%';
       fill.style.width = Math.max(12, (b - a) * 100).toFixed(1) + '%';
+      fill.style.background = 'linear-gradient(90deg,' +
+        wxTempColor(o.lo) + ',' + wxTempColor(o.hi) + ')';
       bar.appendChild(fill);
       var hi = document.createElement('b');
       hi.className = 'wx-dhi';
@@ -3312,6 +3502,12 @@
     hs.forEach(function (o) {
       var col = document.createElement('div');
       col.className = 'wx-hour';
+      if (o.p != null && o.p >= 20) {
+        var pp = document.createElement('span');
+        pp.className = 'wx-hp';
+        pp.textContent = o.p + '%';
+        col.appendChild(pp);
+      }
       var v = document.createElement('span');
       v.className = 'wx-ht';
       v.textContent = o.t + '°';
@@ -3319,6 +3515,7 @@
       bar.className = 'wx-hbar';
       var fill = document.createElement('u');
       fill.style.height = (28 + 72 * (o.t - t0) / tspan).toFixed(0) + '%';
+      fill.style.background = wxTempColor(o.t);
       bar.appendChild(fill);
       var h = document.createElement('span');
       h.className = 'wx-hh';
@@ -3329,12 +3526,24 @@
       item.wxHours.appendChild(col);
     });
 
-    /* 指标行：气压 / 降水概率 / 日出日落，有什么填什么 */
+    /* 指标行：能拿到的都摆上，缺哪个就少哪个。
+       顺序按「一眼最想知道」排：湿度、风、降水、紫外线、气压、能见度、露点、日出日落 */
     item.wxStats.textContent = '';
+    var windTxt = '';
+    if (c.wind != null) {
+      windTxt = c.wind + ' km/h' + (c.wdir != null ? ' ' + windDir(c.wdir) : '');
+    }
+    var precTxt = '';
+    if (c.prec != null && c.prec > 0) { precTxt = c.prec + ' mm'; }
+    if (c.pop != null && c.pop > 0) { precTxt = (precTxt ? precTxt + ' · ' : '') + c.pop + '%'; }
+
     [['湿度', c.hum != null ? c.hum + '%' : ''],
-     ['风', c.wind != null ? c.wind + ' km/h' : ''],
+     ['风', windTxt],
+     ['降水', precTxt],
+     ['紫外线', uvText(c.uv)],
      ['气压', c.press != null ? c.press + ' hPa' : ''],
-     ['降水', c.pop != null ? c.pop + '%' : ''],
+     ['能见度', c.vis != null ? c.vis + ' km' : ''],
+     ['露点', c.dew != null ? c.dew + '°' : ''],
      ['日出', c.sunr || ''],
      ['日落', c.suns || '']].forEach(function (p) {
       if (!p[1]) { return; }
@@ -3370,9 +3579,12 @@
       H = item.h * mm.stepY - mm.rowGap;
     }
     var opt = wxOpts(item);
-    var tier = wxTier(W, H, opt);
-    item.el.classList.remove('is-mini', 'is-mid', 'is-big', 'is-huge');
+    /* 紧凑不是「少显示几块」，是换一套排版：所有信息压成一行，不留白 */
+    var compact = opt.layout === 'compact';
+    var tier = compact ? 'compact' : wxTier(W, H, opt);
+    item.el.classList.remove('is-mini', 'is-mid', 'is-big', 'is-huge', 'is-compact');
     item.el.classList.add('is-' + tier);
+    item.el.classList.toggle('is-compact', compact);
     item.el.dataset.wxTier = tier + ' ' + Math.round(W) + 'x' + Math.round(H);
 
     /* 设置里没勾的块直接关掉，跟尺寸无关 */
@@ -3382,7 +3594,10 @@
     item.el.classList.toggle('show-stats', opt.show.stats);
     /* 体感那一行要宽度，窄块只留温度和城市 */
     item.el.classList.toggle('show-detail',
-      opt.show.detail && tier !== 'mini' && W >= 300);
+      opt.show.detail && (compact ? W >= 300 : tier !== 'mini' && W >= 300));
+    /* 横排要按宽度逐级减内容，不然会挤出边界 */
+    item.el.classList.toggle('wx-nowrap-hide', compact && W < 380);
+    item.el.classList.toggle('wx-very-narrow', compact && W < 250);
 
     /* 够宽就多排几格：天数最多 7，小时最多 24 */
     var dCols = clamp(Math.floor((W - 16) / 92), 3, 7);
@@ -3394,19 +3609,26 @@
     }
 
     var t;
-    if (tier === 'mini') {
+    if (compact) {
+      /* 一行横排：高度基本吃满，宽度留一点给右边的文字 */
+      t = clamp(Math.min(H * 0.58, W * 0.13), 13, 104);
+    } else if (tier === 'mini') {
       t = clamp(Math.min(H * 0.62, W * 0.34), 16, 90);
     } else if (tier === 'mid') {
       t = clamp(Math.min(H * 0.46, W * 0.26), 16, 120);
     } else {
-      /* 大块里上半部分是当前天气，下半部分留给预报 */
-      t = clamp(Math.min(H * (tier === 'huge' ? 0.22 : 0.28), W * 0.20), 24, 140);
+      /* 大块里上半部分是当前天气，下半部分留给预报。
+         按「扣掉预报占位后剩下的高度」算，别拿整卡高度乘系数 ——
+         那样 12×10 的温度只有 106px，周围一圈空得发慌 */
+      var reserve = tier === 'huge' ? 240 : 150;
+      var availH = Math.max(70, H - reserve);
+      t = clamp(Math.min(availH * 0.64, W * 0.21), 24, 150);
     }
     item.wxTemp.style.fontSize = t.toFixed(1) + 'px';
-    var ic = Math.round(clamp(t * 0.74, 14, 64));
+    var ic = Math.round(clamp(t * (compact ? 0.52 : 0.74), 13, 64));
     item.wxIco.style.width = ic + 'px';
     item.wxIco.style.height = ic + 'px';
-    var s = clamp(t * 0.20, 9.5, 16);
+    var s = compact ? clamp(t * 0.30, 10, 15) : clamp(t * 0.20, 9.5, 16);
     item.wxCity.style.fontSize = s.toFixed(1) + 'px';
     item.wxHl.style.fontSize = s.toFixed(1) + 'px';
     if (item.wxDetail) {
@@ -3414,9 +3636,11 @@
     }
 
     /* 预报卡片跟着块大小走 */
-    item.el.style.setProperty('--wx-day-fs', clamp(W / 26, 10, 16).toFixed(1) + 'px');
-    item.el.style.setProperty('--wx-hour-fs', clamp(W / 30, 9, 14).toFixed(1) + 'px');
+    item.el.style.setProperty('--wx-day-fs', clamp(W / 24, 10, 17).toFixed(1) + 'px');
+    item.el.style.setProperty('--wx-hour-fs', clamp(W / 28, 9, 15).toFixed(1) + 'px');
     item.el.style.setProperty('--wx-stat-fs', clamp(W / 44, 9.5, 13).toFixed(1) + 'px');
+    /* 逐小时柱子的高度按卡片高度给，别写死 —— 12×10 里 23px 的条太寒酸 */
+    item.el.style.setProperty('--wx-bar-h', Math.round(clamp(H * 0.15, 20, 84)) + 'px');
   }
 
   function wxRefresh(item) {
@@ -3430,10 +3654,11 @@
     var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + d.lat +
       '&longitude=' + d.lon +
       '&current=temperature_2m,weather_code,apparent_temperature,' +
-      'relative_humidity_2m,wind_speed_10m,surface_pressure' +
+      'relative_humidity_2m,wind_speed_10m,wind_direction_10m,' +
+      'surface_pressure,visibility,dew_point_2m,precipitation' +
       '&daily=weather_code,temperature_2m_max,temperature_2m_min,' +
-      'precipitation_probability_max,sunrise,sunset' +
-      '&hourly=temperature_2m&forecast_days=7&timezone=auto';
+      'precipitation_probability_max,sunrise,sunset,uv_index_max' +
+      '&hourly=temperature_2m,precipitation_probability&forecast_days=7&timezone=auto';
 
     wxFetch(url).then(function (j) {
       var cur = j && j.current;
@@ -3445,13 +3670,15 @@
       var his = day.temperature_2m_max || [];
       var los = day.temperature_2m_min || [];
       /* 第 0 天是今天，预报从明天开始 */
-      for (var i = 1; i < (day.time || []).length && days.length < 6; i++) {
+      for (var i = 1; i < (day.time || []).length && days.length < 7; i++) {
         if (his[i] == null || los[i] == null) { continue; }
         days.push({
           d: wxWeekChar(day.time[i]),
           hi: Math.round(Number(his[i])),
           lo: Math.round(Number(los[i])),
-          k: wxKind(Number(codes[i]))
+          k: wxKind(Number(codes[i])),
+          p: (day.precipitation_probability_max && day.precipitation_probability_max[i] != null)
+            ? Math.round(Number(day.precipitation_probability_max[i])) : null
         });
       }
 
@@ -3466,11 +3693,13 @@
           var dt = new Date(hourly.time[k]);
           if (dt.getTime() >= nowH.getTime() - 30 * 60 * 1000) { from = k; break; }
         }
-        for (var m2 = from; m2 < hourly.time.length && hours.length < 12; m2++) {
+        var hpop = hourly.precipitation_probability || [];
+        for (var m2 = from; m2 < hourly.time.length && hours.length < 24; m2++) {
           if (hts[m2] == null) { continue; }
           hours.push({
             h: new Date(hourly.time[m2]).getHours(),
-            t: Math.round(Number(hts[m2]))
+            t: Math.round(Number(hts[m2])),
+            p: hpop[m2] == null ? null : Math.round(Number(hpop[m2]))
           });
         }
       }
@@ -3491,6 +3720,12 @@
           hum: cur.relative_humidity_2m == null ? null : Math.round(Number(cur.relative_humidity_2m)),
           wind: cur.wind_speed_10m == null ? null : Math.round(Number(cur.wind_speed_10m)),
           press: cur.surface_pressure == null ? null : Math.round(Number(cur.surface_pressure)),
+          vis: cur.visibility == null ? null : Math.round(Number(cur.visibility) / 100) / 10,
+          dew: cur.dew_point_2m == null ? null : Math.round(Number(cur.dew_point_2m)),
+          wdir: cur.wind_direction_10m == null ? null : Math.round(Number(cur.wind_direction_10m)),
+          prec: cur.precipitation == null ? null : Math.round(Number(cur.precipitation) * 10) / 10,
+          uv: (day.uv_index_max && day.uv_index_max[0] != null)
+            ? Math.round(Number(day.uv_index_max[0])) : null,
           pop: (day.precipitation_probability_max && day.precipitation_probability_max[0] != null)
             ? Math.round(Number(day.precipitation_probability_max[0])) : null,
           sunr: (day.sunrise && day.sunrise[0]) ? String(day.sunrise[0]).slice(11, 16) : '',
@@ -3722,14 +3957,19 @@
   /* 预览里的天气：按给定尺寸重新分档并排一遍（不碰真实 item 的数据） */
   function wxPreviewLayout(pv, item, W, H) {
     var opt = wxOpts(item);
-    var tier = wxTier(W, H, opt);
-    pv.classList.remove('is-mini', 'is-mid', 'is-big', 'is-huge');
+    var compact = opt.layout === 'compact';
+    var tier = compact ? 'compact' : wxTier(W, H, opt);
+    pv.classList.remove('is-mini', 'is-mid', 'is-big', 'is-huge', 'is-compact');
     pv.classList.add('is-' + tier);
+    pv.classList.toggle('is-compact', compact);
     pv.classList.toggle('no-days', !opt.show.days);
     pv.classList.toggle('no-hours', !opt.show.hours);
     pv.classList.toggle('no-detail', !opt.show.detail);
     pv.classList.toggle('show-stats', opt.show.stats);
-    pv.classList.toggle('show-detail', opt.show.detail && tier !== 'mini' && W >= 300);
+    pv.classList.toggle('show-detail',
+      opt.show.detail && (compact ? W >= 300 : tier !== 'mini' && W >= 300));
+    pv.classList.toggle('wx-nowrap-hide', compact && W < 380);
+    pv.classList.toggle('wx-very-narrow', compact && W < 250);
 
     var t = pv.querySelector('.wx-temp');
     var ico = pv.querySelector('.wx-ico');
@@ -3739,14 +3979,18 @@
     if (!t) { return; }
 
     var size;
-    if (tier === 'mini') { size = clamp(Math.min(H * 0.62, W * 0.34), 16, 90); }
+    if (compact) { size = clamp(Math.min(H * 0.58, W * 0.13), 13, 104); }
+    else if (tier === 'mini') { size = clamp(Math.min(H * 0.62, W * 0.34), 16, 90); }
     else if (tier === 'mid') { size = clamp(Math.min(H * 0.46, W * 0.26), 16, 120); }
-    else { size = clamp(Math.min(H * (tier === 'huge' ? 0.22 : 0.28), W * 0.20), 24, 140); }
+    else {
+      var reserve = tier === 'huge' ? 240 : 150;
+      size = clamp(Math.min(Math.max(70, H - reserve) * 0.64, W * 0.21), 24, 150);
+    }
 
     t.style.fontSize = size.toFixed(1) + 'px';
-    var ic = Math.round(clamp(size * 0.74, 14, 64));
+    var ic = Math.round(clamp(size * (compact ? 0.52 : 0.74), 13, 64));
     if (ico) { ico.style.width = ic + 'px'; ico.style.height = ic + 'px'; }
-    var s = clamp(size * 0.20, 9.5, 16);
+    var s = compact ? clamp(size * 0.30, 10, 15) : clamp(size * 0.20, 9.5, 16);
     if (city) { city.style.fontSize = s.toFixed(1) + 'px'; }
     if (hl) { hl.style.fontSize = s.toFixed(1) + 'px'; }
     if (det) { det.style.fontSize = clamp(s * 0.92, 9, 14).toFixed(1) + 'px'; }
@@ -3860,6 +4104,7 @@
       for (var i = 0; i < list.length; i++) {
         if (list[i].id === id) { list[i].done = !list[i].done; break; }
       }
+      item.todoFresh = id;      /* 让 render 给这一行加上落位动画 */
       render();
       save();
     }
@@ -3881,8 +4126,12 @@
 
     function render() {
       var list = todoList(item);
-      var left = list.filter(function (o) { return !o.done; }).length;
-      item.todoCount.textContent = list.length ? left + ' / ' + list.length : '';
+      var done = list.filter(function (o) { return o.done; }).length;
+      /* 写成「已完成 / 总数」：原来写「未完成 / 总数」，0/2 很容易被读成
+         「0 条完成」，可实际上两条都打勾了 */
+      item.todoCount.textContent = list.length ? done + ' / ' + list.length : '';
+      item.todoCount.title = list.length
+        ? '已完成 ' + done + ' 条，共 ' + list.length + ' 条' : '';
       item.todoList.textContent = '';
 
       if (!list.length) {
@@ -3902,11 +4151,15 @@
         return (a.done ? 1 : 0) - (b.done ? 1 : 0);
       });
       var rest = list.length - cap;
+      /* 先拿住这个 id：下面建行时要用它判断，循环结束再清。
+         反过来先清会让 `is-fresh` 永远为假 —— 落位动画一次也没播过 */
+      var fresh = item.todoFresh;
 
       /* 未完成的在上面，完成的沉到底部 */
       sorted.slice(0, cap).forEach(function (o) {
         var row = document.createElement('div');
-        row.className = 'todo-row' + (o.done ? ' is-done' : '');
+        row.className = 'todo-row' + (o.done ? ' is-done' : '') +
+          (o.id === fresh ? ' is-fresh' : '');
         row.dataset.id = o.id;
 
         var ck = document.createElement('button');
@@ -3951,6 +4204,7 @@
         });
         item.todoList.appendChild(more);
       }
+      item.todoFresh = '';
     }
 
     item.todoAdd.addEventListener('click', function (e) {
@@ -3997,8 +4251,8 @@
 
   registerWidget('todo', {
     name: '待办', desc: '勾选式清单，存在本地', icon: 'check',
-    size: { w: 8, h: 6 }, min: { w: 6, h: 4 },
-    sizes: [[6, 4], [8, 4], [8, 6], [12, 6], [12, 8]],
+    size: { w: 8, h: 6 }, min: { w: 5, h: 3 },
+    sizes: [[6, 3], [6, 4], [8, 4], [8, 5], [8, 6], [8, 8], [8, 10], [12, 6], [12, 8], [12, 12]],
     create: function () { return { items: [] }; },
     clean: todoClean,
     mount: mountTodo,
@@ -4037,13 +4291,14 @@
     var days = new Date(y, mo + 1, 0).getDate();
     var rows = Math.ceil((lead + days) / 7);
 
-    var html = CAL_WEEK.map(function (w) {
-      return '<span class="cal-wd">' + w + '</span>';
+    var html = CAL_WEEK.map(function (w, wi) {
+      return '<span class="cal-wd' + (wi >= 5 ? ' is-weekend' : '') + '">' + w + '</span>';
     }).join('');
 
     for (var i = 0; i < rows * 7; i++) {
       var d = i - lead + 1;
       var cls = 'cal-cell';
+      if (i % 7 >= 5) { cls += ' is-weekend'; }
       if (d < 1 || d > days) { cls += ' is-out'; }
       if (d === now.getDate()) { cls += ' is-today'; }
       html += '<span class="' + cls + '">' + ((d < 1 || d > days) ? '' : d) + '</span>';
@@ -4956,6 +5211,181 @@
     '--dash', '--grid-dot', '--fg', '--fg-dim', '--fg-faint'
   ];
 
+  /* ---------------- Bing 每日壁纸 ---------------- */
+
+  var BING_KEY = 'sudatab.bing.v1';
+  var BING_TTL = 6 * 60 * 60 * 1000;
+  var BING_API = 'https://www.bing.com/HPImageArchive.aspx?format=js&idx=0&n=8&mkt=zh-CN&pid=hp';
+  /* 官方接口不带 CORS 头：装成扩展（host_permissions 覆盖）能直接取，
+     普通页面预览会被浏览器拦掉，所以备一条带 CORS 的镜像，逐个 index 拿 */
+  var BING_ALT = 'https://bing.biturl.top/?resolution=1920&format=json&mkt=zh-CN&index=';
+  var bingItems = [];
+  var bingBusy = false;
+
+  function bingHint(text) {
+    if (!elBingGrid) { return; }
+    elBingGrid.textContent = '';
+    var d = document.createElement('div');
+    d.className = 'bing-hint';
+    d.textContent = text;
+    elBingGrid.appendChild(d);
+  }
+
+  function bingReadCache() {
+    try {
+      var raw = localStorage.getItem(BING_KEY);
+      var o = raw ? JSON.parse(raw) : null;
+      if (o && Array.isArray(o.items) && o.items.length) {
+        bingItems = o.items;
+        return Date.now() - Number(o.at || 0) < BING_TTL;
+      }
+    } catch (e) {}
+    return false;
+  }
+
+  function bingWriteCache() {
+    try {
+      localStorage.setItem(BING_KEY, JSON.stringify({ at: Date.now(), items: bingItems }));
+    } catch (e) {}
+  }
+
+  /* 版权串形如「雪山（© 某某/Getty Images）」，括号前那句就够做标题 */
+  function bingTitle(s) {
+    return String(s || '').split('（')[0].split('(')[0].trim().slice(0, 46) || 'Bing 每日';
+  }
+
+  function bingShot(out) {
+    if (!out.length) {
+      if (!bingItems.length) { bingHint('没拿到 Bing 壁纸，稍后再试；预设背景照常可用。'); }
+      return;
+    }
+    bingItems = out;
+    bingWriteCache();
+    renderBing();
+  }
+
+  /* 备通道：镜像一次只给一张，并发拿 8 天 */
+  function bingFetchAlt() {
+    var jobs = [];
+    for (var i = 0; i < 8; i++) {
+      jobs.push(
+        fetch(BING_ALT + i, { cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .catch(function () { return null; })
+      );
+    }
+    Promise.all(jobs).then(function (list) {
+      var out = [];
+      list.forEach(function (o) {
+        if (!o || !o.url) { return; }
+        var full = String(o.url);
+        out.push({
+          id: full.slice(0, 80),
+          thumb: full.replace(/_1920x1080\.jpg/, '_400x240.jpg'),
+          full: full,
+          title: bingTitle(o.copyright),
+          date: String(o.start_date || '')
+        });
+      });
+      bingShot(out);
+    }).catch(function () {
+      if (!bingItems.length) { bingHint('连不上 Bing，稍后再试；预设背景照常可用。'); }
+    }).then(function () { bingBusy = false; });
+  }
+
+  function bingFetch() {
+    if (bingBusy) { return; }
+    bingBusy = true;
+    if (!bingItems.length) { bingHint('正在取 Bing 壁纸…'); }
+
+    fetch(BING_API, { cache: 'no-store' })
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        var imgs = (j && j.images) || [];
+        if (!imgs.length) { throw new Error('empty'); }
+        var out = [];
+        imgs.forEach(function (o) {
+          var base = o.urlbase || '';
+          if (!base) { return; }
+          out.push({
+            id: String(o.hdurl || o.url || base).slice(0, 80),
+            thumb: 'https://www.bing.com' + base + '_400x240.jpg',
+            full: 'https://www.bing.com' + base + '_1920x1080.jpg',
+            title: bingTitle(o.copyright),
+            date: String(o.startdate || '')
+          });
+        });
+        bingBusy = false;
+        bingShot(out);
+      })
+      .catch(function () { bingFetchAlt(); });
+  }
+
+  function renderBing() {
+    if (!elBingGrid) { return; }
+    if (!bingItems.length) { bingHint('正在取 Bing 壁纸…'); return; }
+
+    elBingGrid.textContent = '';
+    bingItems.forEach(function (it) {
+      var b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'bing-tile' + (state.bgPhoto && state.bgPhoto.id === it.id ? ' is-active' : '');
+      b.title = it.title;
+
+      var img = document.createElement('img');
+      img.loading = 'lazy';
+      img.decoding = 'async';
+      img.referrerPolicy = 'no-referrer';
+      img.src = it.thumb;
+      img.alt = '';
+      /* 缩略图挂了就撤掉这块，别留一个灰方块 */
+      img.addEventListener('error', function () { b.remove(); });
+
+      var cap = document.createElement('b');
+      cap.textContent = it.title;
+
+      b.appendChild(img);
+      b.appendChild(cap);
+      b.addEventListener('click', function () { setBgPhoto(it); });
+      elBingGrid.appendChild(b);
+    });
+  }
+
+  function applyBgPhoto() {
+    var p = state.bgPhoto;
+    if (!p || !p.full) {
+      document.body.classList.remove('has-photo');
+      if (elBgPhoto) { elBgPhoto.style.backgroundImage = ''; }
+      return;
+    }
+    document.body.classList.add('has-photo');
+    if (elBgPhoto) { elBgPhoto.style.backgroundImage = 'url("' + p.full + '")'; }
+  }
+
+  function setBgPhoto(it) {
+    if (!it) { return; }
+    /* 同一张再点一次 = 取消，回到预设 */
+    if (state.bgPhoto && state.bgPhoto.id === it.id) {
+      clearBgPhoto();
+      return;
+    }
+    state.bgPhoto = { id: it.id, full: it.full, thumb: it.thumb, title: it.title };
+    applyBgPhoto();
+    renderBing();
+    renderSwatches();
+    scheduleSave();
+    showTip('壁纸 · ' + (it.title || 'Bing 每日'), 1600);
+  }
+
+  function clearBgPhoto() {
+    if (!state.bgPhoto) { return; }
+    state.bgPhoto = null;
+    applyBgPhoto();
+    renderBing();
+    renderSwatches();
+    scheduleSave();
+  }
+
   function setBg(id) {
     if (state.bg === id) { return; }
 
@@ -4977,9 +5407,12 @@
     }
 
     state.bg = id;
+    state.bgPhoto = null;
+    applyBgPhoto();
     document.body.dataset.bg = id;
     scheduleSave();
     renderSwatches();
+    renderBing();
   }
 
   function bgName(id) {
@@ -6954,6 +7387,7 @@
 
     state.items.forEach(mountItem);
     document.body.dataset.bg = state.bg;
+    applyBgPhoto();
     syncLockUI();
     layoutAll();
     renderRows();
@@ -6962,6 +7396,8 @@
     renderDensity();
     renderTunings();
     paintClock();
+    bingReadCache();
+    renderBing();
     scheduleSave();
   }
 
@@ -6998,6 +7434,8 @@
   /* ---------------- 设置面板 ---------------- */
 
   function openDrawer() {
+    /* 第一次打开抽屉才去拉 Bing：省得每开一个新标签页就打一次接口 */
+    if (!bingItems.length || !bingReadCache()) { bingFetch(); }
     drawer.classList.add('is-open');
     drawer.setAttribute('aria-hidden', 'false');
     scrim.hidden = false;
@@ -7013,12 +7451,27 @@
     }, 280);
   }
 
+  if (elBingMore) {
+    elBingMore.addEventListener('click', function () {
+      if (bingBusy) { return; }
+      elBingMore.disabled = true;
+      elBingMore.textContent = '取图中…';
+      var done = function () {
+        elBingMore.disabled = false;
+        elBingMore.textContent = '换一批';
+      };
+      bingFetch();
+      window.setTimeout(done, 1500);
+    });
+  }
+
   function renderSwatches() {
     elSwatches.textContent = '';
     BACKGROUNDS.forEach(function (b) {
       var btn = document.createElement('button');
       btn.type = 'button';
-      btn.className = 'swatch' + (state.bg === b.id ? ' is-active' : '');
+      btn.className = 'swatch' +
+        (state.bg === b.id && !state.bgPhoto ? ' is-active' : '');
       btn.dataset.bg = b.id;
       btn.setAttribute('aria-label', b.name);
       var sp = document.createElement('span');
@@ -7054,19 +7507,57 @@
 
   function renderDensity() {
     elDensity.textContent = '';
-    DENSITIES.forEach(function (n) {
-      var btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = 'seg' + (COLS === n ? ' is-active' : '');
-      btn.textContent = n + ' 列';
-      btn.setAttribute('aria-label', n + ' 列');
-      btn.addEventListener('click', function () { setDensity(n); });
-      elDensity.appendChild(btn);
+
+    var row = document.createElement('div');
+    row.className = 'tune';
+
+    var head = document.createElement('div');
+    head.className = 'tune-head';
+    var nm = document.createElement('span');
+    nm.className = 'tune-name';
+    nm.textContent = '列数';
+    var out = document.createElement('span');
+    out.className = 'tune-val';
+    head.appendChild(nm);
+    head.appendChild(out);
+
+    var input = document.createElement('input');
+    input.type = 'range';
+    input.min = String(COLS_MIN);
+    input.max = String(COLS_MAX);
+    input.step = String(COLS_STEP);
+    input.value = String(COLS);
+    input.setAttribute('aria-label', '网格列数');
+
+    function unitPx(n) {
+      var m = metrics();
+      var colW = m.colW;
+      if (n !== COLS) {
+        /* 先按目标列数估一遍，别等松手才知道多大 */
+        var g = m.gapX;
+        colW = (m.W - g * (n - 1)) / n;
+      }
+      return Math.round(UNIT_W * colW + (UNIT_W - 1) * m.gapX);
+    }
+
+    function show(n) {
+      var px = unitPx(n);
+      out.textContent = n + ' 列 · 方块约 ' + px + ' px';
+      elDensityHint.textContent = '方块约 ' + px + ' px';
+    }
+
+    input.addEventListener('input', function () { show(Number(input.value)); });
+    /* 拖动过程中只改读数，松手才真的重排 —— 每挪一下都重新打包会很卡 */
+    input.addEventListener('change', function () {
+      var v = Math.round(Number(input.value) / COLS_STEP) * COLS_STEP;
+      v = Math.max(COLS_MIN, Math.min(COLS_MAX, v));
+      setDensity(v);
     });
 
-    var m = metrics();
-    var unit = UNIT_W * m.colW + (UNIT_W - 1) * m.gapX;
-    elDensityHint.textContent = '方块约 ' + Math.round(unit) + ' px';
+    row.appendChild(head);
+    row.appendChild(input);
+    elDensity.appendChild(row);
+    show(COLS);
   }
 
   /* ---- 外观微调（间距 / 圆角 / 字号） ---- */
@@ -7219,6 +7710,7 @@
   }
 
   function setDensity(newCols) {
+    newCols = Math.max(COLS_MIN, Math.min(COLS_MAX, Math.round(newCols)));
     if (newCols === COLS) { return; }
 
     var k = newCols / COLS;
@@ -7375,6 +7867,28 @@
     );
   });
 
+  /* ---------------- 锁定缩放 ----------------
+     整页是按「1×1 恒为正方形」算出来的：格宽由画布宽反推，行高再由格宽反推。
+     浏览器缩放会改掉 CSS 像素与视口的关系，一次 Ctrl+滚轮就能让整套网格重排，
+     甚至挤出滚动条。所以这里直接把缩放通道堵掉：
+       - Ctrl/⌘ + 滚轮：Chrome 拿它做整页缩放，preventDefault 能拦住
+       - Ctrl/⌘ + 加/减/0：键盘缩放，keydown 里拦
+     不拦的是普通滚轮 —— 内容超出画布时还要靠它移动。 */
+  window.addEventListener('wheel', function (e) {
+    if (!e.ctrlKey && !e.metaKey) { return; }
+    e.preventDefault();
+    e.stopPropagation();
+  }, { passive: false });
+
+  window.addEventListener('keydown', function (e) {
+    if (!(e.ctrlKey || e.metaKey) || e.altKey) { return; }
+    var k = e.key;
+    if (k === '+' || k === '=' || k === '-' || k === '_' || k === '0') {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+
   document.addEventListener('keydown', function (e) {
     if ((e.ctrlKey || e.metaKey) && (e.key === 'f' || e.key === 'F')) {
       e.preventDefault();
@@ -7450,6 +7964,7 @@
     canvas.appendChild(overlay);
     state.items.forEach(mountItem);
     document.body.dataset.bg = state.bg;
+    applyBgPhoto();
     syncLockUI();
     layoutAll();
     renderRows();
@@ -7457,6 +7972,7 @@
     renderEngines();
     renderDensity();
     renderTunings();
+    renderBing();
     paintClock();
 
     /* 天气每 5 分钟看一眼缓存过没过期（过 15 分钟才真去请求） */

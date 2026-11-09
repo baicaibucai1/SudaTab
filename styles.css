@@ -327,7 +327,8 @@ body.has-photo {
   -webkit-mask-image: radial-gradient(120% 100% at 50% 50%, #000 55%, transparent 100%);
   mask-image: radial-gradient(120% 100% at 50% 50%, #000 55%, transparent 100%);
 }
-body.is-dragging .grid-overlay { opacity: .5; }
+body.is-dragging .grid-overlay,
+body.is-resizing .grid-overlay { opacity: .5; }
 
 .canvas {
   position: fixed;
@@ -514,6 +515,55 @@ body.is-dragging .widget:not(.dragging) {
   box-shadow: inset 0 0 0 2.5px rgba(20, 24, 30, .85);
 }
 
+/* 天空底色：开关 + 一句说明 */
+.wx-skyrow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+}
+.dlg-sw {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 13px 6px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, .18);
+  background: rgba(255, 255, 255, .05);
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+  transition: background .14s ease, color .14s ease, border-color .14s ease;
+}
+.sw-track {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 17px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, .16);
+  transition: background .16s ease;
+}
+.sw-dot {
+  position: absolute;
+  left: 2px;
+  top: 2px;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, .72);
+  transition: transform .18s cubic-bezier(.34, 1.32, .64, 1), background .16s ease;
+}
+.dlg-sw.is-on {
+  color: var(--fg);
+  border-color: rgba(255, 255, 255, .34);
+  background: rgba(255, 255, 255, .12);
+}
+.dlg-sw.is-on .sw-track { background: #2f8fe0; }
+.dlg-sw.is-on .sw-dot { transform: translateX(13px); background: #fff; }
+.wx-skyhint { font-size: 11.5px; color: var(--fg-faint); }
+
 .card-swat.is-none {
   background:
     linear-gradient(45deg, transparent 46%, rgba(255, 255, 255, .55) 47%,
@@ -571,32 +621,28 @@ body.is-dragging .widget:not(.dragging) {
    站点图标没有这个（图标只站整格） */
 .w-grip {
   position: absolute;
-  right: 1px;
-  bottom: 1px;
-  width: 18px;
-  height: 18px;
+  right: 4px;
+  bottom: 4px;
+  width: 14px;
+  height: 14px;
   z-index: 7;
   cursor: nwse-resize;
   touch-action: none;
   color: var(--fg-dim);
   opacity: 0;
   pointer-events: none;   /* 命中交给 widget 的 pointerdown 按坐标判断 */
-  transition: opacity .16s ease;
+  transform: translate(2px, 2px);   /* 平时缩进一点，悬停才贴角 */
+  transition: opacity .16s ease, transform .16s ease;
 }
-.widget:hover > .w-grip { opacity: .5; }
-.w-grip:hover { opacity: .95; }
+.w-grip svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  fill: currentColor;
+  filter: drop-shadow(0 1px 1px rgba(8, 10, 14, .22));
+}
+.widget:hover > .w-grip { opacity: .62; transform: none; }
 body.is-locked .w-grip { display: none; }
-.w-grip::before,
-.w-grip::after {
-  content: '';
-  position: absolute;
-  right: 4px;
-  bottom: 4px;
-  border-right: 1.5px solid currentColor;
-  border-bottom: 1.5px solid currentColor;
-}
-.w-grip::before { width: 9px; height: 9px; border-radius: 0 0 2px 0; }
-.w-grip::after { width: 4px; height: 4px; border-radius: 0 0 1px 0; }
 
 /* 拖动时不要过渡，否则框会「追」不上指针 */
 .widget.is-resizing { transition: none !important; }
@@ -609,48 +655,167 @@ body.is-resizing * { cursor: nwse-resize !important; user-select: none; }
 .w-weather, .w-todo, .w-calendar { z-index: 3; }
 
 /* 浅色壁纸上白字会糊，给组件文字一层很淡的投影（和时钟同一套做法） */
-.wx-temp, .wx-bot, .todo, .cal {
+.todo, .cal {
   text-shadow: 0 2px 16px rgba(20, 24, 30, .22);
 }
 
 /* ---- 天气 ----
    四个档位按实际像素切（见 wxTier）：mini / mid / big / huge。
-   块越大往里面填的东西越多：温度 → +城市高低温 → +未来几天 → +逐小时 */
+   小 → 城市 + 温度；中 → 天气名 + 空气质量 + 高低温；大 → +未来一周；最大 → +逐小时 / 指标。
+   底色是「天空」而不是卡面：白字直接压在天光上，和手机天气组件同一套读法 */
 
 .wx {
+  position: relative;
   width: 100%;
   height: 100%;
-  padding: 8px 6%;
   box-sizing: border-box;
+  /* 内边距按块的尺寸算（JS 写变量）：百分比内边距是按宽度算的，
+     宽而矮的条会被上下吃掉一大块 */
+  padding: var(--wx-pad-y, 14px) var(--wx-pad-x, 16px);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: .35em;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: .3em;
   color: var(--fg);
+  border-radius: inherit;
+  overflow: hidden;
+  /* 没有天空底色时也要压得住浅壁纸（和时钟同一套做法） */
+  text-shadow: 0 2px 16px rgba(20, 24, 30, .22);
+}
+
+/* ---- 天空底色 ----
+   不是一张贴图，是「底色 + 天光 + 三团云絮」三层叠出来的：
+   换天气只换配色和云的浓度，结构不动，所以看起来是一块表在换天气 */
+.w-weather > .w-body { border-radius: inherit; }
+
+.wx-sky {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  overflow: hidden;
+  pointer-events: none;
+  background: linear-gradient(166deg, #256EA6 0%, #4B8CBE 46%, #9CC6DC 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .22),
+              inset 0 -1px 0 rgba(255, 255, 255, .10);
+}
+/* 关掉开关时整层撤掉：预览是克隆出来的，行内背景还在，靠这个类统一收口 */
+.w-weather:not(.has-sky) .wx-sky { display: none; }
+/* 右上角的天光 + 底边压暗：纯线性渐变太平，加这两层才有「天」的纵深 */
+.wx-sky::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(80% 64% at 84% 0%, rgba(255, 255, 255, .26), transparent 62%),
+    radial-gradient(130% 72% at 50% 122%, rgba(5, 16, 32, .30), transparent 64%);
+}
+.wx-cloud {
+  position: absolute;
+  display: block;
+  border-radius: 50%;
+  opacity: var(--wx-ca, .8);
+  filter: blur(6px);
+  background:
+    radial-gradient(58% 78% at 38% 52%, rgba(255, 255, 255, .34), transparent 70%),
+    radial-gradient(52% 66% at 64% 44%, rgba(255, 255, 255, .27), transparent 72%),
+    radial-gradient(46% 56% at 52% 78%, rgba(255, 255, 255, .18), transparent 76%);
+}
+.wx-cloud.c1 { width: 64%; height: 48%; left: -15%; top: -10%; }
+.wx-cloud.c2 {
+  width: 52%; height: 38%; right: -12%; top: 24%;
+  opacity: calc(var(--wx-ca, .8) * .82);
+}
+.wx-cloud.c3 {
+  width: 46%; height: 30%; left: 24%; bottom: -15%;
+  opacity: calc(var(--wx-ca, .8) * .66);
+}
+
+/* 天空上的一切：白字压在天光上，投影只负责和云絮脱开 */
+.widget.has-sky {
+  --fg: #ffffff;
+  --fg-dim: rgba(255, 255, 255, .84);
+  --fg-faint: rgba(255, 255, 255, .62);
+  --fg-inverse: #10213a;
+  --ui-line: rgba(255, 255, 255, .36);
+  --ui-line-soft: rgba(255, 255, 255, .20);
+  --ui-fill: rgba(255, 255, 255, .13);
+  --ui-fill-2: rgba(255, 255, 255, .22);
+  --ui-hover: rgba(255, 255, 255, .12);
+  --wx-cloud: rgba(255, 255, 255, .95);
+  --wx-sun: #FFD15C;
+  --wx-drop: #E6F3FF;
+  --wx-snow: #F4FBFF;
+  --wx-bolt: #FFD15C;
+  --wx-fog: rgba(255, 255, 255, .92);
+  --wx-moon: #EEF4FF;
+  --wx-bar-fill: rgba(255, 255, 255, .72);
+}
+.has-sky .wx { text-shadow: 0 1px 12px rgba(6, 18, 36, .30); }
+.has-sky .wx-dico, .has-sky .wx-ico { filter: drop-shadow(0 2px 6px rgba(6, 18, 36, .22)); }
+
+/* 内容层压在天空之上。
+   compact 里 .wx-hero 是 display:contents（没有盒子），
+   所以它里面的两个子元素必须单独抬一层，否则会被天空盖住 */
+.wx > *:not(.wx-sky),
+.wx-hero > * { position: relative; z-index: 1; }
+.w-weather.has-sky > .w-body { background: transparent; }
+
+/* ---- 顶部：城市 + 天气 ---- */
+.wx-top {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .7em;
+  min-width: 0;
+}
+.wx-place { display: inline-flex; align-items: center; gap: .38em; min-width: 0; }
+.wx-pin { width: 1.12em; height: 1.12em; flex: none; opacity: .82; }
+.wx-city {
+  font-weight: 600;
+  letter-spacing: .04em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.wx-cond { display: inline-flex; align-items: center; gap: .45em; flex: none; color: var(--fg-dim); }
+.wx-name { font-weight: 500; letter-spacing: .04em; white-space: nowrap; }
+.wx-ico { display: block; flex: none; width: 0; }
+.wx-ico svg { width: 100%; height: 100%; display: block; }
+
+/* ---- 主区：温度 + 高低温 ---- */
+.wx-hero {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: .7em;
+  min-height: 0;
+  min-width: 0;
 }
 .wx-main {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: .12em;
+  align-items: flex-start;
+  gap: .16em;
   min-width: 0;
-  /* 允许压缩：不然大字号撑住高度，下面的预报会被顶出卡片 */
   min-height: 0;
 }
-.w-weather.is-mini .wx { padding: 4px 6%; }
-.w-weather.is-mini .wx-bot { display: none; }
-
-/* big / huge：上面当前天气，下面预报 */
-.w-weather.is-big .wx,
-.w-weather.is-huge .wx {
-  justify-content: flex-start;
-  gap: .5em;
-  /* 下面压着两排小字，底边多留一点，别让数字贴着方块边 */
-  padding-bottom: 14px;
+.wx-range {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: .22em;
+  flex: none;
+  align-self: flex-start;
+  color: var(--fg-dim);
+  padding-top: .1em;
 }
-.w-weather.is-big .wx-main,
-.w-weather.is-huge .wx-main { flex: 1; justify-content: center; }
+.wx-range span { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.wx-range em { font-style: normal; opacity: .70; margin-right: .3em; }
+
 
 .wx-days, .wx-hours { display: none; width: 100%; }
 
@@ -659,17 +824,17 @@ body.is-resizing * { cursor: nwse-resize !important; user-select: none; }
   display: flex;
   flex: none;
   justify-content: space-between;
-  gap: 12px;
-  padding-top: .45em;
-  border-top: 1px solid var(--ui-line-soft);
+  gap: .4em;
+  padding-top: .1em;
   font-size: var(--wx-day-fs, 12px);
 }
 .w-weather.is-huge .wx-hours {
   display: flex;
   flex: none;
   justify-content: space-between;
-  gap: 4px;
-  padding-top: .6em;
+  gap: .35em;
+  margin-top: .45em;
+  padding-top: .5em;
   border-top: 1px solid var(--ui-line-soft);
   font-size: var(--wx-hour-fs, 11px);
 }
@@ -680,42 +845,22 @@ body.is-resizing * { cursor: nwse-resize !important; user-select: none; }
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: .3em;
-  /* 左右留内边距，不然上一列的「高温」会贴着下一列的「低温」连成一串 */
-  padding: 0 9px;
-  color: var(--fg-dim);
+  gap: .46em;
+  padding: 0 2px;
 }
-.wx-dw { font-size: .92em; letter-spacing: .02em; }
-.wx-dico { display: block; width: 1.55em; height: 1.55em; filter: drop-shadow(0 1px 3px rgba(16, 24, 32, .18)); }
+.wx-dw { color: var(--fg-dim); font-size: .95em; letter-spacing: .02em; white-space: nowrap; }
+.wx-dico { display: block; width: 2.15em; height: 2.15em; }
 .wx-dico svg { width: 100%; height: 100%; display: block; }
 .wx-dtemps {
-  display: flex;
-  align-items: center;
-  gap: .3em;
-  width: 100%;
-  font-size: .9em;
+  display: inline-flex;
+  align-items: baseline;
+  gap: .1em;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
-.wx-dtemps b { font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.wx-dhi { color: var(--fg); }
-.wx-dlo { color: var(--fg-faint); }
-
-/* 当天温度区间：一条按整周跨度定位的横条 */
-.wx-dbar {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 12px;
-  height: 4px;
-  border-radius: 999px;
-  background: var(--ui-line-soft);
-  overflow: hidden;
-}
-.wx-dbar u {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  border-radius: 999px;
-  background: var(--ui-line);   /* JS 会按当天温度覆成渐变 */
-}
+.wx-dlo { color: var(--fg-dim); }
+.wx-dhi { color: var(--fg); font-weight: 600; }
+.wx-dsep { color: var(--fg-faint); font-size: .92em; }
 
 .wx-hour {
   flex: 1 1 0;
@@ -738,11 +883,11 @@ body.is-resizing * { cursor: nwse-resize !important; user-select: none; }
   left: 50%;
   bottom: 0;
   transform: translateX(-50%);
-  width: 54%;
-  min-height: 4px;
+  width: 58%;
+  min-height: 5px;
   border-radius: 999px 999px 3px 3px;
-  background: var(--ui-line);
-  opacity: .9;   /* 24 根柱子挨在一起，满色会糊成一条色带 */
+  background: var(--wx-bar-fill, var(--ui-line));
+  opacity: .95;   /* 24 根柱子挨在一起，满色会糊成一条色带 */
 }
 
 /* 指标行：湿度 / 风 / 气压 / 降水 / 日出日落 */
@@ -756,131 +901,154 @@ body.is-resizing * { cursor: nwse-resize !important; user-select: none; }
   color: var(--fg-dim);
   font-size: var(--wx-stat-fs, 11px);
 }
-.w-weather.show-stats.is-big .wx-stats,
 .w-weather.show-stats.is-huge .wx-stats { display: flex; }
 .wx-stat { display: inline-flex; align-items: baseline; gap: .3em; white-space: nowrap; }
 .wx-stat i { font-style: normal; color: var(--fg-faint); }
 .wx-stat b { font-weight: 500; color: var(--fg); font-variant-numeric: tabular-nums; }
 
 /* ---- 紧凑版式：一行横排 ----
-   以前 compact 只是「不显示预报」，排版还是居中竖排，
-   一块 688×105 的卡里三行字飘在中间，四周全是空 —— 那不叫紧凑。
-   这里改成整行左起、内容吃满高度，预报和指标一律不出现 */
+   compact 不是「少显示几块」，是换一套排版：整行横向铺开、吃满高度。
+   顺序是「温度 → 城市/天气 → 高低温 → 指标」，窄了就逐级往后舍 */
 .w-weather.is-compact .wx {
   flex-direction: row;
   align-items: center;
   justify-content: flex-start;
-  gap: .5em;
-  padding: 0 5%;
+  gap: .9em;
+  padding: 0 var(--wx-pad-x, 16px);
 }
+/* hero 用 display:contents 把温度和高低温提到 .wx 这一层，
+   这样 order 才能把它们和城市、指标排成一条线 */
+.w-weather.is-compact .wx-hero { display: contents; }
 .w-weather.is-compact .wx-main {
+  order: 1;
   flex: none;
   flex-direction: row;
   align-items: center;
-  justify-content: flex-start;
   gap: .5em;
   min-height: 0;
 }
 .w-weather.is-compact .wx-top {
-  gap: .06em;
+  order: 2;
   flex: none;
-  /* 横排里 flex item 会被压：不给 max-content，59px 的「29°」只剩 36px */
+  gap: .5em;
   min-width: max-content;
 }
+.w-weather.is-compact .wx-range {
+  order: 3;
+  flex: none;
+  align-self: center;
+  flex-direction: row;
+  align-items: baseline;
+  gap: .35em;
+  padding: 0;
+}
+/* 横排里没有「最低/最高」的位置，改成 13°/23° */
+.w-weather.is-compact .wx-range em { display: none; }
+.w-weather.is-compact .wx-lo::after { content: '/'; margin-left: .3em; opacity: .55; }
 .w-weather.is-compact .wx-temp { min-width: max-content; }
 .w-weather.is-compact .wx-num,
 .w-weather.is-compact .wx-deg { flex: none; }
-.w-weather.is-compact .wx-bot { gap: .55em; letter-spacing: 0; }
-.w-weather.is-compact .wx-detail {
-  display: block;
-  max-width: none;
-  overflow: visible;
-  text-overflow: clip;
-}
-.w-weather.is-compact .wx-stats,
+/* 这一行里体感挤不下，城市右边已经有天气名了 */
+.w-weather.is-compact .wx-detail { display: none !important; }
+
 .w-weather.is-compact .wx-days,
 .w-weather.is-compact .wx-hours { display: none !important; }
 
 /* 右半边用指标把这一行填满：只留温度、城市会空掉一半宽度 */
-.w-weather.is-compact .wx-stats {
-  display: flex !important;
+.w-weather.is-compact.show-stats .wx-stats {
+  display: flex;
+  order: 4;
   flex: 1 1 auto;
   min-width: 0;
   flex-wrap: nowrap;
   justify-content: flex-end;
   gap: .85em;
   overflow: hidden;
-  /* 放不下时让最右边自然淡出，而不是硬切一刀 */
-  -webkit-mask-image: linear-gradient(90deg, #000 82%, transparent 100%);
-  mask-image: linear-gradient(90deg, #000 82%, transparent 100%);
 }
 
-/* 横排放不下就逐级减：先舍右侧指标，再舍第二行小字，最后舍城市/高低温 */
+/* 横排放不下就逐级减：先舍右侧指标，最后舍城市/天气 */
+/* 一条横排放不下九个指标：按宽度只留前 2~4 个（数量由 JS 给 st2/st3/st4） */
+.w-weather.is-compact.st2 .wx-stat:nth-child(n+3),
+.w-weather.is-compact.st3 .wx-stat:nth-child(n+4),
+.w-weather.is-compact.st4 .wx-stat:nth-child(n+5) { display: none; }
 .w-weather.is-compact.wx-nowrap-hide .wx-stats { display: none !important; }
-.w-weather.is-compact.wx-nowrap-hide .wx-detail { display: none; }
-.w-weather.is-compact.wx-very-narrow .wx-bot { display: none; }
-/* 只剩图标和温度时靠左会显得偏，居中 */
+.w-weather.is-compact.wx-very-narrow .wx-top { display: none; }
+/* 只剩温度时靠左会显得偏，居中 */
 .w-weather.is-compact.wx-very-narrow .wx { justify-content: center; }
 
 /* 逐小时的降水概率 */
 .wx-hp {
-  color: #5CA8F0;
+  color: var(--wx-drop, #5CA8F0);
   font-size: .8em;
   font-variant-numeric: tabular-nums;
   line-height: 1;
   margin-bottom: .1em;
 }
+.has-sky .wx-hp { color: rgba(255, 255, 255, .82); }
 
 /* 设置里关掉的块：放在最后，压过 .is-big / .show-detail 的显示规则 */
 .w-weather.no-days .wx-days,
 .w-weather.no-hours .wx-hours,
 .w-weather.no-detail .wx-detail { display: none; }
 
-.wx-top { display: flex; align-items: center; gap: .1em; }
-.wx-ico { display: block; filter: drop-shadow(0 3px 8px rgba(16, 24, 32, .22)); }
-.wx-ico svg { width: 100%; height: 100%; display: block; }
+/* ---- 温度 ---- */
 .wx-temp {
   display: inline-flex;
   flex: none;
   white-space: nowrap;
   align-items: flex-start;
-  font-weight: 200;
-  line-height: .92;
-  letter-spacing: -.045em;
+  font-weight: 600;
+  line-height: .84;
+  letter-spacing: -.05em;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 10px 40px rgba(20, 24, 30, .18);
 }
 /* 度数不跟着数字一起放大，顶在上沿 */
 .wx-deg {
-  font-size: .34em;
+  font-size: .40em;
   line-height: 1;
-  margin-top: .16em;
+  margin-top: .13em;
   margin-left: .02em;
   letter-spacing: 0;
-  opacity: .9;
+  font-weight: 500;
+  opacity: .92;
 }
-.wx-bot {
-  display: flex;
-  align-items: baseline;
-  gap: .7em;
-  color: var(--fg-dim);
-  letter-spacing: .05em;
-  white-space: nowrap;
-}
-.wx-city { font-weight: 500; }
-.wx-hl { font-variant-numeric: tabular-nums; }
 
-/* 第二行小字：天气名 · 体感 · 湿度 · 风 */
+/* 第二行小字：AQI + 体感。天空底色上要能压住云，所以不用最淡的那档 */
 .wx-detail {
   display: none;
-  color: var(--fg-faint);
-  letter-spacing: .04em;
+  color: var(--fg-dim);
+  letter-spacing: .03em;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   max-width: 100%;
+  font-variant-numeric: tabular-nums;
 }
 .w-weather.show-detail .wx-detail { display: block; }
+.wx-detail b { font-weight: 600; color: var(--fg); }
+.wx-sep { opacity: .5; margin: 0 .45em; }
+.wx-aqi {
+  display: inline-block;
+  width: .52em;
+  height: .52em;
+  border-radius: 50%;
+  background: var(--aqi, #8FE3A6);
+  margin-right: .36em;
+  vertical-align: .02em;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, .16);
+}
+
+/* ---- 档位 ----
+   mini 只留「在哪、多少度」；mid 补上天气名 + 空气质量 / 高低温；
+   big 起才铺开一周预报 —— 和参考里的三档一一对应 */
+.w-weather.is-mini .wx { justify-content: flex-start; }
+/* 小的那档只留「在哪、多少度」，但右上角保留一个天气图标，
+   不然 2:1 的横条右半边全空 */
+.w-weather.is-mini .wx-name,
+.w-weather.is-mini .wx-range,
+.w-weather.is-mini .wx-detail,
+.w-weather.is-mini .wx-stats { display: none; }
+.w-weather.is-mini .wx-hero { align-items: center; }
 
 /* ---- 待办 ---- */
 .todo {
@@ -1042,82 +1210,130 @@ body.is-resizing * { cursor: nwse-resize !important; user-select: none; }
 .todo-row:hover .todo-del { opacity: .85; }
 .todo-del:hover { background: rgba(255, 255, 255, .14); }
 
-/* ---- 月历 ---- */
+/* ---- 月历 ----
+   四档：mini 周几+数字 / mid 一行胶囊 / big 竖排卡片 / huge 左信息+右整月。
+   周末和今天用 --cal-red（中文日历的习惯），其余跟主题文字色走 */
 .cal {
+  --cal-red: #d8483b;
   width: 100%;
   height: 100%;
-  padding: 9px 11px;
+  padding: 8px 10px;
   box-sizing: border-box;
   display: flex;
-  flex-direction: column;
-  font-size: var(--cal-fs, 12px);
+  align-items: center;
+  justify-content: center;
   color: var(--fg);
 }
-.cal-head {
-  flex: none;
-  text-align: center;
-  font-weight: 500;
-  letter-spacing: .06em;
-  margin-bottom: 3px;
-}
+/* 深色卡面上要提亮一档，否则红发闷 */
+.widget.is-dark-card .cal { --cal-red: #ff7463; }
 
-/* 放不下整月时 → 只显示今天 */
-.cal-today {
-  display: none;
-  flex: 1;
-  min-height: 0;
+.cal-card {
+  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: .22em;
+  min-width: 0;
+  min-height: 0;
 }
-.w-calendar.is-today .cal-today { display: flex; }
-.w-calendar.is-today .cal-head,
-.w-calendar.is-today .cal-grid { display: none; }
-
-.cal-tnum {
+.cal-wdtop {
+  display: none;
+  color: var(--cal-red);
+  font-weight: 600;
+  letter-spacing: .14em;
+  line-height: 1.1;
+}
+.cal-head { display: none; white-space: nowrap; }
+.cal-num {
   font-weight: 200;
-  line-height: .94;
+  line-height: .9;
   letter-spacing: -.045em;
   font-variant-numeric: tabular-nums;
-  text-shadow: 0 10px 40px rgba(20, 24, 30, .18);
+  text-shadow: 0 8px 32px rgba(20, 24, 30, .20);
 }
-.cal-tmeta {
-  color: var(--fg-dim);
-  letter-spacing: .1em;
-  white-space: nowrap;
+.cal-meta,
+.cal-lunar { display: none; white-space: nowrap; letter-spacing: .03em; }
+.cal-meta { color: var(--fg-faint); }
+.cal-lunar { color: var(--fg-dim); }
+
+.cal-pill { display: none; align-items: baseline; gap: .34em; white-space: nowrap; }
+.cal-pill-d {
+  font-weight: 300;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
 }
+.cal-pill-w { font-style: normal; color: var(--cal-red); font-weight: 500; }
+
 .cal-grid {
-  flex: 1;
+  display: none;
+  width: 100%;
   min-height: 0;
-  display: grid;
   grid-template-columns: repeat(7, 1fr);
   align-items: center;
   justify-items: center;
-  gap: 1px;
+  font-size: var(--cal-fs, 12px);
 }
+
+/* mini：周几 + 大数字 */
+.w-calendar.is-mini .cal-wdtop { display: block; }
+
+/* mid：一行「11/9 周一」 */
+.w-calendar.is-mid .cal-pill { display: flex; }
+.w-calendar.is-mid .cal-card { display: none; }
+
+/* big：年份做成一条红底白字的带子，下面是数字和农历 */
+.w-calendar.is-big .cal-head {
+  display: block;
+  padding: .16em .66em;
+  border-radius: .42em;
+  background: var(--cal-red);
+  color: #fff;
+  font-weight: 500;
+  letter-spacing: .06em;
+  margin-bottom: .48em;
+}
+.w-calendar.is-big .cal-num { margin: .02em 0 .04em; }
+.w-calendar.is-big .cal-meta,
+.w-calendar.is-big .cal-lunar { display: block; }
+.w-calendar.is-big .cal-lunar { margin-top: .14em; }
+
+/* huge：左边信息列 + 右边整月 */
+.w-calendar.is-huge .cal {
+  justify-content: flex-start;
+  gap: 5%;
+  padding: 10px 12px;
+}
+.w-calendar.is-huge .cal-card { flex: 0 0 auto; align-items: flex-start; }
+.w-calendar.is-huge .cal-head {
+  display: block;
+  color: var(--fg);
+  letter-spacing: .04em;
+}
+.w-calendar.is-huge .cal-meta,
+.w-calendar.is-huge .cal-lunar { display: block; }
+.w-calendar.is-huge .cal-lunar { margin-top: .12em; }
+.w-calendar.is-huge .cal-grid { display: grid; flex: 1 1 auto; }
+
 .cal-wd {
   color: var(--fg-faint);
   font-size: .82em;
   font-weight: 500;
   letter-spacing: .04em;
 }
-/* 周末列整体压一档：一眼能看出这一周的骨架 */
-.cal-wd.is-weekend { opacity: .62; }
-.cal-cell.is-weekend { color: var(--fg-dim); }
+.cal-wd.is-weekend { color: var(--cal-red); opacity: .78; }
 .cal-cell {
-  width: 1.85em;
-  height: 1.85em;
+  width: 1.9em;
+  height: 1.9em;
   display: grid;
   place-items: center;
   border-radius: 50%;
-  font-variant-numeric: tabular-nums;
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
-.cal-cell.is-out { opacity: .26; }
+.cal-cell.is-out { opacity: .22; }
+.cal-cell.is-weekend { color: var(--cal-red); }
 .cal-cell.is-today {
-  background: var(--fg);
-  color: var(--fg-inverse, #151c26);
+  background: var(--cal-red);
+  color: #fff;
   font-weight: 600;
 }
 

@@ -763,7 +763,7 @@
         ? { x: box.x, y: box.y, w: box.w, h: box.h }
         : { x: o.x, y: o.y, w: o.w, h: o.h };
       /* 图标方块按「整格」挪（2 列 / 3 行），被挤开之后也还站在格点上；
-         时钟/搜索/引语这些按 1 列 1 行微调，保留原来的灵活度 */
+         时钟/搜索/引语这些纵向按 1 行微调，横向仍守 2 列格点 */
       return { id: o.id, x: b.x, y: b.y, w: b.w, h: b.h, ox: o.x, oy: o.y,
                cell: o.type === 'link' };
     });
@@ -778,7 +778,9 @@
     /* 螺旋扩散：先试原地，再一圈圈往外，同行优先于换行 */
     function nearestFree(o) {
       var maxR = Math.max(cols, rowsLimit);
-      var sx = o.cell ? UNIT_W : 1;
+      /* 横向一律按 2 列（一个方块宽）挪，被挤开的组件也不会落在半格上；
+         纵向只有图标按 3 行走，时钟 / 搜索这类 1–2 行高的部件仍按 1 行微调 */
+      var sx = UNIT_W;
       var sy = o.cell ? UNIT_H : 1;
       for (var r = 0; r <= maxR; r++) {
         var best = null, bestCost = Infinity;
@@ -1475,6 +1477,9 @@
       var grip = document.createElement('span');
       grip.className = 'w-grip';
       grip.setAttribute('aria-hidden', 'true');
+      /* 一个圆角的实心三角，贴身落在右下角（CSS 三角没法做圆角，用 path） */
+      grip.innerHTML = '<svg viewBox="0 0 16 16">' +
+        '<path d="M15 5.9V12.6A2.4 2.4 0 0 1 12.6 15H5.9L15 5.9Z"/></svg>';
       el.appendChild(grip);
       item.grip = grip;
     }
@@ -1499,18 +1504,31 @@
        捕获之后 pointermove 全被重定向过去，window 上的监听一个也收不到 */
 
     function move(e) {
-      var dw = Math.round((e.clientX - x0) / m.stepX);
+      /* 横向按「一个方块 = 2 列」走，和图标共用同一套格点：
+         以前 1 列一步，7 列就是 3.5 个方块，看起来就是占了半格。
+         纵向仍按 1 行 —— 时钟 / 搜索只有 1–2 行高，3 行一步太粗。 */
+      var dw = Math.round((e.clientX - x0) / (m.stepX * UNIT_W)) * UNIT_W;
       var dh = Math.round((e.clientY - y0) / m.stepY);
       /* 上限至少给到原宽：贴右边界的块 COLS - x 可能比现有宽度还小，
-         直接 clamp 会把「想拉宽」变成「反而被压窄」 */
-      nw = clamp(w0 + dw, min.w, Math.max(w0, COLS - item.x));
+         直接 clamp 会把「想拉宽」变成「反而被压窄」。
+         再把上限收成偶数，免得贴边时只能停在 7 列这种半个方块宽。 */
+      var maxW = Math.max(min.w, COLS - item.x, w0);
+      if (maxW % UNIT_W) { maxW -= 1; }
+      maxW = Math.max(maxW, min.w);
+      nw = clamp(w0 + dw, min.w, maxW);
+      if (dw !== 0 && nw % UNIT_W) { nw = Math.min(nw + 1, maxW); }
       nh = clamp(h0 + dh, min.h, 60);
       if (nw === w0 && nh === h0) { return; }
       moved = true;
-      el.style.width = (nw * m.stepX - m.gapX) + 'px';
-      el.style.height = (nh * m.stepY - m.rowGap) + 'px';
+      var pw = nw * m.stepX - m.gapX;
+      /* 和 rectOf 用同一个高度公式：1–2 行高的部件按「行高 + 间距」兜底，
+         否则拖动时是 h*stepY-rowGap、松手后又变成 byRows，会突然长高一截 */
+      var ph = Math.max(nh * m.stepY - m.rowGap,
+                        nh * m.rowH + (nh - 1) * m.gapX);
+      el.style.width = pw + 'px';
+      el.style.height = ph + 'px';
       if (item.fit) {
-        item.fit({ width: nw * m.stepX - m.gapX, height: nh * m.stepY - m.rowGap });
+        item.fit({ width: pw, height: ph });
       }
     }
 
@@ -3177,46 +3195,62 @@
 
   /* 天气图标：双色（填充 + 少量描边）。原来是单色 1.5px 线稿，
      小尺寸发虚、大尺寸发空，看着很像个占位符。
-     颜色固定不跟主题，浅色壁纸上靠 drop-shadow 与背景分开。 */
+     颜色走 CSS 变量：铺在壁纸上时是灰蓝，铺在天空底色上时换成白 / 奶黄 —— 
+     同一套图形两副配色，不用维护两份 path。 */
   var WX_ART = {
-    sun: '<circle cx="12" cy="12" r="4.4" fill="#F7B733"/>' +
-      '<g stroke="#F7B733" stroke-width="1.9" stroke-linecap="round">' +
+    sun: '<circle cx="12" cy="12" r="4.4" fill="var(--wx-sun,#F7B733)"/>' +
+      '<g stroke="var(--wx-sun,#F7B733)" stroke-width="1.9" stroke-linecap="round">' +
       '<path d="M12 2.9v2.3M12 18.8v2.3M2.9 12h2.3M18.8 12h2.3' +
       'M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6"/></g>',
 
-    part: '<circle cx="8.7" cy="8.5" r="3" fill="#F7B733"/>' +
-      '<g stroke="#F7B733" stroke-width="1.7" stroke-linecap="round">' +
+    part: '<circle cx="8.7" cy="8.5" r="3" fill="var(--wx-sun,#F7B733)"/>' +
+      '<g stroke="var(--wx-sun,#F7B733)" stroke-width="1.7" stroke-linecap="round">' +
       '<path d="M8.7 3.3v1.5M8.7 12.2v1.5M3.5 8.5h1.5M12.4 8.5h1.5"/></g>' +
       '<path d="M7.5 19.2h9.7a3.25 3.25 0 0 0 .2-6.5 4.75 4.75 0 0 0-9 1.25A3 3 0 0 0 7.5 19.2z" ' +
-      'fill="#93A9BE"/>',
+      'fill="var(--wx-cloud,#93A9BE)"/>',
 
     cloud: '<path d="M6.7 18.3h10.6a3.4 3.4 0 0 0 .2-6.8 4.9 4.9 0 0 0-9.3 1.3A3.1 3.1 0 0 0 6.7 18.3z" ' +
-      'fill="#93A9BE"/>',
+      'fill="var(--wx-cloud,#93A9BE)"/>',
 
     rain: '<path d="M6.7 15.1h10.6a3.4 3.4 0 0 0 .2-6.8 4.9 4.9 0 0 0-9.3 1.3A3.1 3.1 0 0 0 6.7 15.1z" ' +
-      'fill="#93A9BE"/>' +
-      '<g fill="#4A90D9">' +
+      'fill="var(--wx-cloud,#93A9BE)"/>' +
+      '<g fill="var(--wx-drop,#4A90D9)">' +
       '<path d="M8.6 16.4c-.9 1.3-1.3 2.1-1.3 2.7a1.25 1.25 0 0 0 2.5 0c0-.6-.4-1.4-1.2-2.7z"/>' +
       '<path d="M12 16.4c-.9 1.3-1.3 2.1-1.3 2.7a1.25 1.25 0 0 0 2.5 0c0-.6-.4-1.4-1.2-2.7z"/>' +
       '<path d="M15.4 16.4c-.9 1.3-1.3 2.1-1.3 2.7a1.25 1.25 0 0 0 2.5 0c0-.6-.4-1.4-1.2-2.7z"/></g>',
 
     snow: '<path d="M6.7 15.1h10.6a3.4 3.4 0 0 0 .2-6.8 4.9 4.9 0 0 0-9.3 1.3A3.1 3.1 0 0 0 6.7 15.1z" ' +
-      'fill="#93A9BE"/>' +
-      '<g stroke="#A8C9EA" stroke-width="1.5" stroke-linecap="round">' +
+      'fill="var(--wx-cloud,#93A9BE)"/>' +
+      '<g stroke="var(--wx-snow,#A8C9EA)" stroke-width="1.5" stroke-linecap="round">' +
       '<path d="M9 17v3.1M7.7 17.8l2.6 1.6M10.3 17.8l-2.6 1.6"/>' +
       '<path d="M15 17v3.1M13.7 17.8l2.6 1.6M16.3 17.8l-2.6 1.6"/></g>',
 
     storm: '<path d="M6.7 14.5h10.6a3.4 3.4 0 0 0 .2-6.8 4.9 4.9 0 0 0-9.3 1.3A3.1 3.1 0 0 0 6.7 14.5z" ' +
-      'fill="#93A9BE"/>' +
-      '<path d="M13.1 15.6l-2.9 4.2h2.4l-1 3 3.1-4.3h-2.3z" fill="#F5A623"/>',
+      'fill="var(--wx-cloud,#93A9BE)"/>' +
+      '<path d="M13.1 15.6l-2.9 4.2h2.4l-1 3 3.1-4.3h-2.3z" fill="var(--wx-bolt,#F5A623)"/>',
 
-    fog: '<g stroke="#93A9BE" stroke-width="1.9" stroke-linecap="round">' +
-      '<path d="M4.4 8.6h15.2M3.2 12.4h13.8M6.4 16.2h13.4M8.8 20h9"/></g>'
+    fog: '<g stroke="var(--wx-fog,#93A9BE)" stroke-width="1.9" stroke-linecap="round">' +
+      '<path d="M4.4 8.6h15.2M3.2 12.4h13.8M6.4 16.2h13.4M8.8 20h9"/></g>',
+
+    /* 夜里还画太阳就露馅了：晴 / 多云各有一版月亮 */
+    moon: '<path d="M20.6 15.1A8.9 8.9 0 0 1 9.3 3.8a8.9 8.9 0 1 0 11.3 11.3z" ' +
+      'fill="var(--wx-moon,#8FA6BD)"/>' +
+      '<g fill="var(--wx-moon,#8FA6BD)" opacity=".75">' +
+      '<circle cx="18.6" cy="6.2" r="1"/><circle cx="20.9" cy="9.4" r=".7"/></g>',
+
+    partNight: '<path d="M13.8 3.2a4.6 4.6 0 0 0 5.1 6.2 4.8 4.8 0 1 1-5.1-6.2z" ' +
+      'fill="var(--wx-moon,#8FA6BD)"/>' +
+      '<path d="M7.5 19.2h9.7a3.25 3.25 0 0 0 .2-6.5 4.75 4.75 0 0 0-9 1.25A3 3 0 0 0 7.5 19.2z" ' +
+      'fill="var(--wx-cloud,#93A9BE)"/>'
   };
 
-  function wxIcon(kind) {
-    return '<svg viewBox="0 0 24 24" fill="none">' +
-      (WX_ART[kind] || WX_ART.cloud) + '</svg>';
+  function wxIcon(kind, day) {
+    var art = WX_ART[kind] || WX_ART.cloud;
+    if (day === false) {
+      if (kind === 'sun') { art = WX_ART.moon; }
+      else if (kind === 'part') { art = WX_ART.partNight; }
+    }
+    return '<svg viewBox="0 0 24 24" fill="none">' + art + '</svg>';
   }
 
   /* 风向角度 → 方位（45° 一档，8 个） */
@@ -3264,6 +3298,45 @@
     return 'rgb(' + last[1].join(',') + ')';
   }
 
+  /* 天空底色：按天气 + 昼夜换一套渐变。
+     参考的是手机天气组件那种「一眼看到天气」的观感 —— 白字压在天光上，
+     比半透明卡面上铺灰字信息层级清楚得多。云量只影响渐变和云絮浓度，
+     不给每种天气画插画，免得十几个分支各自跑偏 */
+  var WX_SKY = {
+    sun:   { d: ['#1C6FD2', '#3E93E4', '#9FD3F4'], n: ['#0A1730', '#16305A', '#2C4F7C'], ca: .42 },
+    part:  { d: ['#256EA6', '#4B8CBE', '#9CC6DC'], n: ['#0B1930', '#1A3251', '#314E6C'], ca: .78 },
+    cloud: { d: ['#3B5B76', '#587D98', '#8FA8B9'], n: ['#101A2A', '#213348', '#384B5F'], ca: 1 },
+    rain:  { d: ['#2A4156', '#3D5C76', '#5C8095'], n: ['#091220', '#152433', '#25394B'], ca: 1 },
+    snow:  { d: ['#496A85', '#799AB2', '#BAD1E0'], n: ['#111F2D', '#223648', '#3A5266'], ca: .9 },
+    storm: { d: ['#222A38', '#333E51', '#4A556A'], n: ['#080B12', '#141A26', '#232B39'], ca: 1 },
+    fog:   { d: ['#506576', '#6F8698', '#A1B4C1'], n: ['#131B23', '#222E38', '#36444E'], ca: .55 }
+  };
+
+  function wxSkyCss(kind, day) {
+    var s = WX_SKY[kind] || WX_SKY.cloud;
+    var c = day ? s.d : s.n;
+    return 'linear-gradient(166deg,' + c[0] + ' 0%,' + c[1] + ' 46%,' + c[2] + ' 100%)';
+  }
+
+  function wxSkyAlpha(kind) {
+    var s = WX_SKY[kind] || WX_SKY.cloud;
+    return s.ca;
+  }
+
+  /* 空气质量：Open-Meteo 的 us_aqi 与国标分级的分界一致（50/100/150/200/300），
+     直接用国标的中文档位，比「Moderate」这种译名更像国内天气 App */
+  function aqiBand(v) {
+    var n = Number(v);
+    if (!isFinite(n) || n < 0) { return null; }
+    if (n <= 50) { return { t: '优', c: '#8FE3A6' }; }
+    if (n <= 100) { return { t: '良', c: '#FFE08A' }; }
+    if (n <= 150) { return { t: '轻度污染', c: '#FFC178' }; }
+    if (n <= 200) { return { t: '中度污染', c: '#FF9A8B' }; }
+    if (n <= 300) { return { t: '重度污染', c: '#E79BE8' }; }
+    return { t: '严重污染', c: '#D98AAE' };
+  }
+
+
   function wxData(item) {
     var d = item.data || {};
     var city = typeof d.city === 'string' && d.city.trim() ? d.city.trim().slice(0, 16) : WX_DEFAULT.city;
@@ -3285,12 +3358,14 @@
   /* 显示哪些块：设置弹窗里勾，存在 data.show 上；layout 决定"多大算大" */
   var WX_SHOW = { detail: true, days: true, hours: true, stats: true };
   var WX_LAYOUTS = ['auto', 'compact', 'full'];
+  var WX_SKY_DEF = true;   /* 天空底色默认开：这是天气组件的「脸」 */
 
   function wxOpts(item) {
     var d = (item && item.data) || {};
     var s = (d.show && typeof d.show === 'object') ? d.show : {};
     return {
       layout: WX_LAYOUTS.indexOf(d.layout) >= 0 ? d.layout : 'auto',
+      sky: d.sky !== false,
       show: {
         detail: s.detail !== false,
         days: s.days !== false,
@@ -3301,11 +3376,12 @@
   }
 
   function wxOptsPatch(o) {
-    var out = { layout: o.layout, show: {} };
+    var out = { layout: o.layout, show: {}, sky: o.sky !== false };
     Object.keys(WX_SHOW).forEach(function (k) {
       if (o.show[k] !== WX_SHOW[k]) { out.show[k] = o.show[k]; }
     });
     if (!Object.keys(out.show).length) { delete out.show; }
+    if (out.sky === WX_SKY_DEF) { delete out.sky; }
     return out;
   }
 
@@ -3313,6 +3389,7 @@
     var out = {};
     var d = raw || {};
     if (WX_LAYOUTS.indexOf(d.layout) >= 0) { out.layout = d.layout; }
+    if (d.sky === false) { out.sky = false; }
     if (d.show && typeof d.show === 'object') {
       var sh = {};
       Object.keys(WX_SHOW).forEach(function (k) {
@@ -3358,6 +3435,9 @@
         prec: isFinite(Number(c.prec)) ? Math.round(Number(c.prec) * 10) / 10 : null,
         sunr: (typeof c.sunr === 'string' ? c.sunr.slice(0, 5) : ''),
         suns: (typeof c.suns === 'string' ? c.suns.slice(0, 5) : ''),
+        isDay: c.isDay !== false,
+        aqi: isFinite(Number(c.aqi)) ? Math.round(Number(c.aqi)) : null,
+        pm25: isFinite(Number(c.pm25)) ? Math.round(Number(c.pm25) * 10) / 10 : null,
         kind: WX_NAME[c.kind] ? c.kind : 'cloud',
         days: days,
         hours: hours
@@ -3366,14 +3446,14 @@
     return out;
   }
 
-  /* 8 秒超时；连不上就 reject，由调用方决定怎么显示 */
-  function wxFetch(url) {
+  /* timeout 可调：空气质量是「有更好、没有也不影响」的附加信息，别让它拖住主请求 */
+  function wxFetch(url, ms) {
     return new Promise(function (resolve, reject) {
       var ctl = null;
       var timer = window.setTimeout(function () {
         try { if (ctl) { ctl.abort(); } } catch (e) {}
         reject(new Error('timeout'));
-      }, 8000);
+      }, ms || 8000);
       function done(fn, v) {
         window.clearTimeout(timer);
         fn(v);
@@ -3399,8 +3479,10 @@
     /* compact 不走这里（它是一套独立排版），由 wxLayout 直接分流 */
     var full = (opt && opt.layout) === 'full';
     if (h < (full ? 92 : 120) || w < (full ? 168 : 190)) { return 'mini'; }
-    if (h < (full ? 168 : 250) || w < (full ? 300 : 360)) { return 'mid'; }
-    if (h < (full ? 248 : 360)) { return 'big'; }
+    if (h < (full ? 168 : 232) || w < (full ? 300 : 360)) { return 'mid'; }
+    /* 最大档下面压着「一周 + 逐小时 + 指标」三排，矮了会挤成一团：
+       即便选「详细」也不让它提前进 huge */
+    if (h < (full ? 330 : 360)) { return 'big'; }
     return 'huge';
   }
 
@@ -3412,6 +3494,21 @@
     return isNaN(d.getTime()) ? '' : WEEK[d.getDay()];
   }
 
+  /* 天空层：底色 + 云絮。颜色按天气与昼夜换，结构固定 ——
+     看上去是「同一块表在换天气」，而不是三套互不相干的设计 */
+  function wxSkyPaint(item) {
+    if (!item.el) { return; }
+    var on = wxOpts(item).sky;
+    item.el.classList.toggle('has-sky', on);
+    if (!item.wxSky) { return; }
+    var c = wxData(item).cache;
+    var kind = c ? c.kind : 'cloud';
+    var day = !c || c.isDay !== false;
+    item.wxSky.style.background = on ? wxSkyCss(kind, day) : 'none';
+    item.wxSky.style.setProperty('--wx-ca', String(wxSkyAlpha(kind)));
+    item.el.dataset.wxSky = kind + (day ? ' day' : ' night');
+  }
+
   function paintWeather(item) {
     if (!item.wxTemp) { return; }
     var d = wxData(item);
@@ -3421,74 +3518,55 @@
       item.wxTemp.innerHTML = '<span class="wx-num">--</span>';
       item.wxIco.innerHTML = wxIcon('cloud');
       item.wxCity.textContent = item.wxErr ? '连不上天气' : d.city;
-      item.wxHl.textContent = item.wxErr ? '右键重试' : '获取中…';
-      item.wxDetail.textContent = '';
+      item.wxName.textContent = '';
+      item.wxHl.textContent = '';
+      item.wxDetail.textContent = item.wxErr ? '右键重试' : '获取中…';
       item.wxDays.textContent = '';
       item.wxHours.textContent = '';
+      item.wxStats.textContent = '';
       item.el.title = d.city;
+      wxSkyPaint(item);
       return;
     }
 
     item.wxTemp.innerHTML = '<span class="wx-num">' + c.temp + '</span>' +
       '<span class="wx-deg">°</span>';
-    item.wxIco.innerHTML = wxIcon(c.kind);
+    item.wxIco.innerHTML = wxIcon(c.kind, c.isDay);
     item.wxCity.textContent = d.city;
-    item.wxHl.textContent = (c.hi != null && c.lo != null)
-      ? c.hi + '° / ' + c.lo + '°'
-      : (WX_NAME[c.kind] || '');
+    item.wxName.textContent = WX_NAME[c.kind] || '';
+    item.wxHl.innerHTML = (c.hi != null && c.lo != null)
+      ? '<span class="wx-lo"><em>最低</em>' + c.lo + '°</span>' +
+        '<span class="wx-hi"><em>最高</em>' + c.hi + '°</span>'
+      : '';
     item.el.title = d.city + '　' + (WX_NAME[c.kind] || '') + '　更新于 ' +
       new Date(c.at).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
 
-    /* 第二行小字只放「一眼信息」：天气名 + 体感。
+    /* 第二行小字只放「一眼信息」：空气质量 + 体感。
        湿度 / 风 / 气压那些归下面的指标行 —— 曾经两行都写，重复得很傻 */
-    var bits = [WX_NAME[c.kind] || ''];
+    var bits = [];
+    var ab = aqiBand(c.aqi);
+    if (ab) {
+      bits.push('<i class="wx-aqi" style="--aqi:' + ab.c + '"></i>AQI ' + ab.t +
+        ' <b>' + Math.round(c.aqi) + '</b>');
+    }
     if (c.feel != null) { bits.push('体感 ' + c.feel + '°'); }
-    item.wxDetail.textContent = bits.filter(Boolean).join(' · ');
+    if (!bits.length) { bits.push(WX_NAME[c.kind] || ''); }
+    item.wxDetail.innerHTML = bits.join('<span class="wx-sep">·</span>');
 
-    /* 未来几天：低温 — 温度条 — 高温，条的位置按整周的跨度算 */
+    /* 未来几天：周几 / 图标 / 低温~高温。
+       参考的是手机天气组件那一条 —— 一列一天，扫一眼就知道这周怎么走 */
     item.wxDays.textContent = '';
-    var ds = (c.days || []).slice(0, item.wxDayCols || 5);
-    var lo0 = Math.min.apply(null, ds.map(function (o) { return o.lo; }));
-    var hi0 = Math.max.apply(null, ds.map(function (o) { return o.hi; }));
-    var span = Math.max(1, hi0 - lo0);
+    var ds = (c.days || []).slice(0, item.wxDayCols || 6);
 
-    ds.forEach(function (o) {
+    ds.forEach(function (o, i) {
       var col = document.createElement('div');
       col.className = 'wx-day';
-
-      var w = document.createElement('span');
-      w.className = 'wx-dw';
-      w.textContent = o.d ? '周' + o.d : '';
-
-      var ic = document.createElement('span');
-      ic.className = 'wx-dico';
-      ic.innerHTML = wxIcon(o.k);
-
-      var row = document.createElement('span');
-      row.className = 'wx-dtemps';
-      var lo = document.createElement('b');
-      lo.className = 'wx-dlo';
-      lo.textContent = o.lo + '°';
-      var bar = document.createElement('i');
-      bar.className = 'wx-dbar';
-      var fill = document.createElement('u');
-      var a = (o.lo - lo0) / span;
-      var b = (o.hi - lo0) / span;
-      fill.style.left = (a * 100).toFixed(1) + '%';
-      fill.style.width = Math.max(12, (b - a) * 100).toFixed(1) + '%';
-      fill.style.background = 'linear-gradient(90deg,' +
-        wxTempColor(o.lo) + ',' + wxTempColor(o.hi) + ')';
-      bar.appendChild(fill);
-      var hi = document.createElement('b');
-      hi.className = 'wx-dhi';
-      hi.textContent = o.hi + '°';
-      row.appendChild(lo);
-      row.appendChild(bar);
-      row.appendChild(hi);
-
-      col.appendChild(w);
-      col.appendChild(ic);
-      col.appendChild(row);
+      col.innerHTML =
+        '<span class="wx-dw">' + (i === 0 ? '明天' : (o.d ? '周' + o.d : '')) + '</span>' +
+        '<span class="wx-dico">' + wxIcon(o.k) + '</span>' +
+        '<span class="wx-dtemps"><span class="wx-dlo">' + o.lo + '°</span>' +
+        '<span class="wx-dsep">~</span>' +
+        '<span class="wx-dhi">' + o.hi + '°</span></span>';
       item.wxDays.appendChild(col);
     });
 
@@ -3515,7 +3593,8 @@
       bar.className = 'wx-hbar';
       var fill = document.createElement('u');
       fill.style.height = (28 + 72 * (o.t - t0) / tspan).toFixed(0) + '%';
-      fill.style.background = wxTempColor(o.t);
+      /* 天空底色上换成白色柱：彩色温度条压在天光上像贴纸，会抢走温度本身 */
+      fill.style.background = 'var(--wx-bar-fill,' + wxTempColor(o.t) + ')';
       bar.appendChild(fill);
       var h = document.createElement('span');
       h.className = 'wx-hh';
@@ -3558,6 +3637,7 @@
       item.wxStats.appendChild(box);
     });
 
+    wxSkyPaint(item);
     wxRelayout(item);
   }
 
@@ -3568,6 +3648,81 @@
     var r = item.el ? item.el.getBoundingClientRect() : null;
     if (!r) { return; }
     wxLayout(item, r.width, r.height);
+  }
+
+  /* 一档一套字号，全部由「块有多大」推出来。
+     画布与设置里的预览共用同一份 —— 以前两处各写一遍公式，改一处忘一处 */
+  function wxSizes(W, H, tier) {
+    var o = { temp: 0, city: 0, cond: 0, ico: 0, detail: 0, day: 0, hour: 0, stat: 0, bar: 0 };
+
+    if (tier === 'compact') {
+      o.temp = clamp(Math.min(H * 0.56, W * 0.13), 13, 104);
+      o.city = clamp(o.temp * 0.32, 10, 15);
+      o.cond = o.city;
+      o.ico = clamp(o.temp * 0.50, 13, 56);
+      o.detail = clamp(o.city * 0.92, 9, 13);
+      o.day = clamp(W / 52, 10, 15);
+      o.hour = clamp(W / 56, 9, 14);
+      o.stat = clamp(W / 58, 9.5, 13);
+      o.bar = Math.round(clamp(H * 0.36, 18, 96));
+      return o;
+    }
+    if (tier === 'mini') {
+      o.temp = clamp(Math.min(H * 0.56, W * 0.34), 24, 104);
+      o.city = clamp(Math.min(W * 0.055, H * 0.10), 9.5, 13);
+      o.cond = o.city;
+      o.ico = clamp(o.city * 1.9, 15, 24);
+      o.detail = clamp(o.city * 0.92, 9, 12);
+      return o;
+    }
+
+    /* 剩下的高度才是温度能用的：天数 / 逐小时 / 指标行都先扣掉 */
+    if (tier === 'mid') {
+      o.temp = clamp(Math.min(H * 0.50, W * 0.26), 24, 124);
+    } else if (tier === 'big') {
+      o.temp = clamp(Math.min(H * 0.30, W * 0.22), 30, 150);
+    } else {
+      /* 最下面压着预报 + 逐小时 + 指标三排，温度得先给它们让位 */
+      o.temp = clamp(Math.min(H * 0.22, W * 0.20), 30, 150);
+    }
+    o.city = clamp(Math.min(W * 0.024, H * 0.085), 10, 15);
+    o.cond = o.city;
+    o.ico = clamp(o.city * 1.9, 16, 34);
+    o.detail = clamp(o.city * 0.92, 9.5, 14);
+    o.day = clamp(W / 54, 10, 14);
+    o.hour = clamp(W / 58, 9, 13);
+    o.stat = clamp(W / 52, 10, 13);
+    o.bar = Math.round(clamp(H * 0.12, 18, 74));
+    return o;
+  }
+
+  function wxPaintSizes(root, s, W, H) {
+    if (!root) { return; }
+    function set(sel, v) {
+      var n = root.querySelector(sel);
+      if (n && v > 0) { n.style.fontSize = v.toFixed(1) + 'px'; }
+    }
+    set('.wx-temp', s.temp);
+    set('.wx-city', s.city);
+    set('.wx-name', s.cond);
+    set('.wx-range', s.city);
+    set('.wx-detail', s.detail);
+
+    var ico = root.querySelector('.wx-ico');
+    if (ico && s.ico > 0) {
+      ico.style.width = Math.round(s.ico) + 'px';
+      ico.style.height = Math.round(s.ico) + 'px';
+    }
+
+    /* 内边距按块的实际尺寸给：百分比内边距是按宽度算的，宽而矮的条会上下被吃掉 */
+    root.style.setProperty('--wx-pad-y', Math.round(clamp(H * 0.09, 9, 26)) + 'px');
+    root.style.setProperty('--wx-pad-x', Math.round(clamp(W * 0.035, 12, 28)) + 'px');
+
+    root.style.setProperty('--wx-day-fs', s.day.toFixed(1) + 'px');
+    root.style.setProperty('--wx-hour-fs', s.hour.toFixed(1) + 'px');
+    root.style.setProperty('--wx-stat-fs', s.stat.toFixed(1) + 'px');
+    /* 逐小时柱子的高度按卡片高度给，别写死 —— 12×10 里 23px 的条太寒酸 */
+    root.style.setProperty('--wx-bar-h', s.bar + 'px');
   }
 
   function wxLayout(item, W, H) {
@@ -3598,6 +3753,10 @@
     /* 横排要按宽度逐级减内容，不然会挤出边界 */
     item.el.classList.toggle('wx-nowrap-hide', compact && W < 380);
     item.el.classList.toggle('wx-very-narrow', compact && W < 250);
+    /* 横排里指标显示几个：给少了右边空，给多了挤成一条 */
+    item.el.classList.toggle('st2', compact && W < 620);
+    item.el.classList.toggle('st3', compact && W >= 620 && W < 880);
+    item.el.classList.toggle('st4', compact && W >= 880);
 
     /* 够宽就多排几格：天数最多 7，小时最多 24 */
     var dCols = clamp(Math.floor((W - 16) / 92), 3, 7);
@@ -3608,39 +3767,31 @@
       paintWeather(item);      /* 重绘一次，里面会再回调这里；列数已相等，不会无限递归 */
     }
 
-    var t;
-    if (compact) {
-      /* 一行横排：高度基本吃满，宽度留一点给右边的文字 */
-      t = clamp(Math.min(H * 0.58, W * 0.13), 13, 104);
-    } else if (tier === 'mini') {
-      t = clamp(Math.min(H * 0.62, W * 0.34), 16, 90);
-    } else if (tier === 'mid') {
-      t = clamp(Math.min(H * 0.46, W * 0.26), 16, 120);
-    } else {
-      /* 大块里上半部分是当前天气，下半部分留给预报。
-         按「扣掉预报占位后剩下的高度」算，别拿整卡高度乘系数 ——
-         那样 12×10 的温度只有 106px，周围一圈空得发慌 */
-      var reserve = tier === 'huge' ? 240 : 150;
-      var availH = Math.max(70, H - reserve);
-      t = clamp(Math.min(availH * 0.64, W * 0.21), 24, 150);
-    }
-    item.wxTemp.style.fontSize = t.toFixed(1) + 'px';
-    var ic = Math.round(clamp(t * (compact ? 0.52 : 0.74), 13, 64));
-    item.wxIco.style.width = ic + 'px';
-    item.wxIco.style.height = ic + 'px';
-    var s = compact ? clamp(t * 0.30, 10, 15) : clamp(t * 0.20, 9.5, 16);
-    item.wxCity.style.fontSize = s.toFixed(1) + 'px';
-    item.wxHl.style.fontSize = s.toFixed(1) + 'px';
-    if (item.wxDetail) {
-      item.wxDetail.style.fontSize = clamp(s * 0.92, 9, 14).toFixed(1) + 'px';
-    }
+    var s = wxSizes(W, H, tier);
+    wxPaintSizes(item.el, s, W, H);
+    wxSkyPaint(item);
+  }
 
-    /* 预报卡片跟着块大小走 */
-    item.el.style.setProperty('--wx-day-fs', clamp(W / 24, 10, 17).toFixed(1) + 'px');
-    item.el.style.setProperty('--wx-hour-fs', clamp(W / 28, 9, 15).toFixed(1) + 'px');
-    item.el.style.setProperty('--wx-stat-fs', clamp(W / 44, 9.5, 13).toFixed(1) + 'px');
-    /* 逐小时柱子的高度按卡片高度给，别写死 —— 12×10 里 23px 的条太寒酸 */
-    item.el.style.setProperty('--wx-bar-h', Math.round(clamp(H * 0.15, 20, 84)) + 'px');
+  /* 空气质量单独一个接口，失败就不显示这一行 —— 不能因为 AQI 挂了
+     把整块天气变成「连不上」。城市换了以后老请求的结果直接丢掉 */
+  function wxFetchAqi(item, d, seq) {
+    var url = 'https://air-quality-api.open-meteo.com/v1/air-quality?latitude=' + d.lat +
+      '&longitude=' + d.lon + '&current=us_aqi,pm2_5&timezone=auto';
+    wxFetch(url, 6000).then(function (j) {
+      var cur = j && j.current;
+      var v = cur ? Number(cur.us_aqi) : NaN;
+      if (!isFinite(v) || item.wxAqiSeq !== seq) { return; }
+      item.wxAqi = {
+        v: Math.round(v),
+        pm: (cur.pm2_5 == null) ? null : Math.round(Number(cur.pm2_5) * 10) / 10
+      };
+      var c = (item.data || {}).cache;
+      if (!c) { return; }
+      c.aqi = item.wxAqi.v;
+      c.pm25 = item.wxAqi.pm;
+      paintWeather(item);
+      scheduleSave();
+    }).catch(function () { /* 拿不到就算了 */ });
   }
 
   function wxRefresh(item) {
@@ -3648,14 +3799,17 @@
     var d = wxData(item);
     wxBusy[item.id] = true;
     item.wxErr = '';
+    item.wxAqiSeq = (item.wxAqiSeq || 0) + 1;
+    var seq = item.wxAqiSeq;
     if (!d.cache) { paintWeather(item); }
+    wxFetchAqi(item, d, seq);
 
     /* forecast_days 只能写一次：写两次时后一个会盖掉前一个（曾经只回了 1 天） */
     var url = 'https://api.open-meteo.com/v1/forecast?latitude=' + d.lat +
       '&longitude=' + d.lon +
       '&current=temperature_2m,weather_code,apparent_temperature,' +
       'relative_humidity_2m,wind_speed_10m,wind_direction_10m,' +
-      'surface_pressure,visibility,dew_point_2m,precipitation' +
+      'surface_pressure,visibility,dew_point_2m,precipitation,is_day' +
       '&daily=weather_code,temperature_2m_max,temperature_2m_min,' +
       'precipitation_probability_max,sunrise,sunset,uv_index_max' +
       '&hourly=temperature_2m,precipitation_probability&forecast_days=7&timezone=auto';
@@ -3731,7 +3885,10 @@
           sunr: (day.sunrise && day.sunrise[0]) ? String(day.sunrise[0]).slice(11, 16) : '',
           suns: (day.sunset && day.sunset[0]) ? String(day.sunset[0]).slice(11, 16) : '',
           days: days,
-          hours: hours
+          hours: hours,
+          isDay: Number(cur.is_day) !== 0,
+          aqi: (item.wxAqiSeq === seq && item.wxAqi) ? item.wxAqi.v : null,
+          pm25: (item.wxAqiSeq === seq && item.wxAqi) ? item.wxAqi.pm : null
         }
       }).cache;
       paintWeather(item);
@@ -3767,6 +3924,7 @@
         item.data.lon = Number(r.longitude);
         item.data.cache = null;
         item.wxErr = '';
+        item.wxAqi = null;
         paintWeather(item);
         wxRefresh(item);
         scheduleSave();
@@ -3817,6 +3975,30 @@
     layoutSeg.root.querySelector('.tune-head').remove();
     boxL.appendChild(layoutSeg.root);
 
+    /* 天空底色：这是天气组件的默认外观，不是「卡面」的一部分 ——
+       卡面是全局设置，这里只解释「天气自己要不要铺天」 */
+    var skyRow = document.createElement('div');
+    skyRow.className = 'wx-skyrow';
+    var skyBtn = document.createElement('button');
+    skyBtn.type = 'button';
+    skyBtn.className = 'dlg-sw' + (draft.sky ? ' is-on' : '');
+    skyBtn.setAttribute('role', 'switch');
+    skyBtn.setAttribute('aria-checked', draft.sky ? 'true' : 'false');
+    skyBtn.innerHTML = '<span class="sw-track"><span class="sw-dot"></span></span>' +
+      '<span class="sw-txt">天空底色</span>';
+    skyBtn.addEventListener('click', function () {
+      draft.sky = !draft.sky;
+      skyBtn.classList.toggle('is-on', draft.sky);
+      skyBtn.setAttribute('aria-checked', draft.sky ? 'true' : 'false');
+      rebuild();
+    });
+    skyRow.appendChild(skyBtn);
+    var skyHint = document.createElement('span');
+    skyHint.className = 'wx-skyhint';
+    skyHint.textContent = '按天气换渐变，白字压在底色上';
+    skyRow.appendChild(skyHint);
+    boxL.appendChild(skyRow);
+
     var boxS = document.createElement('div');
     boxS.className = 'dlg-box';
     boxS.appendChild(secTitle('显示内容'));
@@ -3863,7 +4045,9 @@
       box = { w: Math.round(r.width), h: Math.round(r.height) };
       stage.textContent = '';
       pv = item.el.cloneNode(true);
-      pv.className = 'widget sp-pv';
+      pv.className = 'widget w-weather sp-pv' +
+        (draft.sky ? ' has-sky' : '') +
+        (item.el.classList.contains('is-dark-card') ? ' is-dark-card' : '');
       pv.style.left = '0px';
       pv.style.top = '0px';
       stage.appendChild(pv);
@@ -3880,10 +4064,13 @@
       pv.style.transform = 'scale(' + k + ')';
       /* 预览用的是同一套分档逻辑：把 draft 临时挂上去算一次 */
       var backup = item.data;
-      item.data = { layout: draft.layout, show: draft.show };
-      applyCardLook(pv, box.w, box.h, cardLook(item));
-      wxPreviewLayout(pv, item, box.w, box.h);
-      item.data = backup;
+      item.data = { layout: draft.layout, show: draft.show, sky: draft.sky };
+      try {
+        applyCardLook(pv, box.w, box.h, cardLook(item));
+        wxPreviewLayout(pv, item, box.w, box.h);
+      } finally {
+        item.data = backup;   /* 无论如何都要还回去，否则保存时会把缓存写丢 */
+      }
     }
 
     /* ---- 底部 ---- */
@@ -3897,12 +4084,15 @@
     reset.addEventListener('click', function () {
       draft = {
         layout: 'auto',
+        sky: WX_SKY_DEF,
         show: {
           detail: WX_SHOW.detail, days: WX_SHOW.days,
           hours: WX_SHOW.hours, stats: WX_SHOW.stats
         }
       };
       layoutSeg.set('auto');
+      skyBtn.classList.add('is-on');
+      skyBtn.setAttribute('aria-checked', 'true');
       Object.keys(tgBtns).forEach(function (k) {
         tgBtns[k].classList.toggle('is-on', draft.show[k]);
       });
@@ -3940,6 +4130,7 @@
       item.data = item.data || {};
       item.data.layout = patch.layout;
       item.data.show = patch.show || {};
+      item.data.sky = patch.sky !== false;
       close();
       paintWeather(item);
       layoutAll();
@@ -3970,37 +4161,16 @@
       opt.show.detail && (compact ? W >= 300 : tier !== 'mini' && W >= 300));
     pv.classList.toggle('wx-nowrap-hide', compact && W < 380);
     pv.classList.toggle('wx-very-narrow', compact && W < 250);
+    pv.classList.toggle('st2', compact && W < 620);
+    pv.classList.toggle('st3', compact && W >= 620 && W < 880);
+    pv.classList.toggle('st4', compact && W >= 880);
 
-    var t = pv.querySelector('.wx-temp');
-    var ico = pv.querySelector('.wx-ico');
-    var city = pv.querySelector('.wx-city');
-    var hl = pv.querySelector('.wx-hl');
-    var det = pv.querySelector('.wx-detail');
-    if (!t) { return; }
-
-    var size;
-    if (compact) { size = clamp(Math.min(H * 0.58, W * 0.13), 13, 104); }
-    else if (tier === 'mini') { size = clamp(Math.min(H * 0.62, W * 0.34), 16, 90); }
-    else if (tier === 'mid') { size = clamp(Math.min(H * 0.46, W * 0.26), 16, 120); }
-    else {
-      var reserve = tier === 'huge' ? 240 : 150;
-      size = clamp(Math.min(Math.max(70, H - reserve) * 0.64, W * 0.21), 24, 150);
-    }
-
-    t.style.fontSize = size.toFixed(1) + 'px';
-    var ic = Math.round(clamp(size * (compact ? 0.52 : 0.74), 13, 64));
-    if (ico) { ico.style.width = ic + 'px'; ico.style.height = ic + 'px'; }
-    var s = compact ? clamp(size * 0.30, 10, 15) : clamp(size * 0.20, 9.5, 16);
-    if (city) { city.style.fontSize = s.toFixed(1) + 'px'; }
-    if (hl) { hl.style.fontSize = s.toFixed(1) + 'px'; }
-    if (det) { det.style.fontSize = clamp(s * 0.92, 9, 14).toFixed(1) + 'px'; }
-    pv.style.setProperty('--wx-day-fs', clamp(W / 26, 10, 16).toFixed(1) + 'px');
-    pv.style.setProperty('--wx-hour-fs', clamp(W / 30, 9, 14).toFixed(1) + 'px');
-    pv.style.setProperty('--wx-stat-fs', clamp(W / 44, 9.5, 13).toFixed(1) + 'px');
+    if (!pv.querySelector('.wx-temp')) { return; }
+    wxPaintSizes(pv, wxSizes(W, H, tier), W, H);
   }
 
   registerWidget('weather', {
-    name: '天气', desc: '实时气温 / 未来几天 · 逐小时', icon: 'cloud',
+    name: '天气', desc: '实时气温 · 空气质量 / 未来几天 · 逐小时', icon: 'cloud',
     size: { w: 8, h: 4 }, min: { w: 4, h: 3 },
     sizes: [[4, 3], [6, 4], [8, 4], [8, 6], [12, 8], [12, 10]],
     create: function () {
@@ -4012,19 +4182,36 @@
       var root = document.createElement('div');
       root.className = 'wx';
       root.innerHTML =
-        '<div class="wx-main">' +
-          '<div class="wx-top"><span class="wx-ico"></span><span class="wx-temp">--</span></div>' +
-          '<div class="wx-bot"><span class="wx-city"></span><span class="wx-hl"></span></div>' +
-          '<div class="wx-detail"></div>' +
+        '<div class="wx-sky" aria-hidden="true">' +
+          '<i class="wx-cloud c1"></i><i class="wx-cloud c2"></i><i class="wx-cloud c3"></i>' +
         '</div>' +
-        '<div class="wx-stats"></div>' +
+        '<div class="wx-top">' +
+          '<span class="wx-place">' +
+            '<svg class="wx-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+            'stroke-width="2" stroke-linecap="round" aria-hidden="true">' +
+            '<path d="M12 21.2c3.1-3 6.6-6.6 6.6-10.4a6.6 6.6 0 1 0-13.2 0c0 3.8 3.5 7.4 6.6 10.4z"/>' +
+            '<circle cx="12" cy="10.5" r="2.4"/></svg>' +
+            '<span class="wx-city"></span>' +
+          '</span>' +
+          '<span class="wx-cond"><span class="wx-name"></span><span class="wx-ico"></span></span>' +
+        '</div>' +
+        '<div class="wx-hero">' +
+          '<div class="wx-main">' +
+            '<div class="wx-temp"><span class="wx-num">--</span></div>' +
+            '<div class="wx-detail"></div>' +
+          '</div>' +
+          '<div class="wx-range wx-hl"></div>' +
+        '</div>' +
         '<div class="wx-days"></div>' +
-        '<div class="wx-hours"></div>';
+        '<div class="wx-hours"></div>' +
+        '<div class="wx-stats"></div>';
       item.body.appendChild(root);
+      item.wxSky = root.querySelector('.wx-sky');
       item.wxIco = root.querySelector('.wx-ico');
       item.wxTemp = root.querySelector('.wx-temp');
       item.wxCity = root.querySelector('.wx-city');
-      item.wxHl = root.querySelector('.wx-hl');
+      item.wxName = root.querySelector('.wx-name');
+      item.wxHl = root.querySelector('.wx-range');
       item.wxDetail = root.querySelector('.wx-detail');
       item.wxStats = root.querySelector('.wx-stats');
       item.wxDays = root.querySelector('.wx-days');
@@ -4271,20 +4458,74 @@
 
   var CAL_WEEK = ['一', '二', '三', '四', '五', '六', '日'];
 
-  /* 小到放不下整月时，改成「今天」大字：日期 + 月份星期 */
-  function calTodayMode(W, H) {
-    return H < 190 || W < 230;
+  /* ---------------- 月历 ----------------
+     四档按实际像素切：mini 周几+数字 / mid 一行胶囊 / big 竖排卡片 /
+     huge 左边信息 + 右边整月网格。农历用浏览器内置的 Chinese calendar，
+     不自己扛 1900–2100 的表（省 200 多条数据，也不会在某年之后错乱）。 */
+
+  var LUNAR_DAY = ('初一 初二 初三 初四 初五 初六 初七 初八 初九 初十 ' +
+                   '十一 十二 十三 十四 十五 十六 十七 十八 十九 二十 ' +
+                   '廿一 廿二 廿三 廿四 廿五 廿六 廿七 廿八 廿九 三十').split(' ');
+
+  var lunarFmt = null;
+  function lunarText(d) {
+    try {
+      if (!lunarFmt) {
+        lunarFmt = new Intl.DateTimeFormat('zh-CN-u-ca-chinese',
+          { month: 'long', day: 'numeric' });
+      }
+      var m = '', dd = '';
+      lunarFmt.formatToParts(d).forEach(function (p) {
+        if (p.type === 'month') { m = p.value; }
+        if (p.type === 'day') { dd = p.value; }
+      });
+      var n = parseInt(dd, 10);
+      return (m && n) ? m + (LUNAR_DAY[n - 1] || '') : '';
+    } catch (e) { return ''; }
+  }
+
+  function dayOfYear(d) {
+    return Math.round((d - new Date(d.getFullYear(), 0, 0)) / 86400000);
+  }
+
+  /* ISO 周：跨年那几天按「所属周的周四」归属 */
+  function isoWeek(d) {
+    var t = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    var wd = t.getUTCDay() || 7;
+    t.setUTCDate(t.getUTCDate() + 4 - wd);
+    var y0 = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+    return Math.ceil(((t - y0) / 86400000 + 1) / 7);
+  }
+
+  function calTier(W, H) {
+    /* 整月不是「大到某个像素」才给，而是「右边那半张月历放得下」才给：
+       左边信息列约 110px，右边 7 列 ×（表头 + 6 周），每格不低于 ~18px，
+       加上内边距和 5% 间隙，300×180 就够了。以前写死 W>=440 且 H>=300：
+       窄窗口 12 列密度下，满宽的月历块只有 ~395×240，永远够不到，
+       于是再宽也只有一个大数字。另外要求横向（W 比 H 大 5% 以上），
+       竖长条还是留给卡片档，别把格子挤成一条线。 */
+    if (W >= 300 && H >= 180 && W >= H * 1.05) { return 'huge'; }
+    if (H >= 182 && W >= 236) { return 'big'; }
+    if (W >= 300 && H >= 92) { return 'mid'; }
+    return 'mini';
   }
 
   function paintCal(item) {
-    if (!item.calGrid) { return; }
+    if (!item.calNum) { return; }
     var now = new Date();
-    var y = now.getFullYear(), mo = now.getMonth();
-    var md = (mo + 1) + '月' + now.getDate() + '日';
+    var y = now.getFullYear(), mo = now.getMonth(), day = now.getDate();
+    var wd = '周' + WEEK[now.getDay()];
+    var lunar = lunarText(now);
 
+    item.calPillD.textContent = (mo + 1) + '/' + day;
+    item.calPillW.textContent = wd;
+    item.calWtop.textContent = wd;
     item.calHead.textContent = y + '年' + (mo + 1) + '月';
-    item.calTnum.textContent = now.getDate();
-    item.calTmeta.textContent = md + ' · 星期' + WEEK[now.getDay()];
+    item.calNum.textContent = day;
+    item.calMeta.textContent = '第' + dayOfYear(now) + '天 · 第' + isoWeek(now) + '周';
+    item.calLunar.textContent = (lunar ? lunar + ' · ' : '') + wd;
+    item.el.title = y + '年' + (mo + 1) + '月' + day + '日　' +
+      (lunar ? '农历' + lunar + '　' : '') + wd;
 
     var first = new Date(y, mo, 1);
     var lead = (first.getDay() + 6) % 7;           /* 周一为第一列 */
@@ -4300,13 +4541,61 @@
       var cls = 'cal-cell';
       if (i % 7 >= 5) { cls += ' is-weekend'; }
       if (d < 1 || d > days) { cls += ' is-out'; }
-      if (d === now.getDate()) { cls += ' is-today'; }
+      if (d === day) { cls += ' is-today'; }
       html += '<span class="' + cls + '">' + ((d < 1 || d > days) ? '' : d) + '</span>';
     }
     item.calGrid.innerHTML = html;
     /* 表头一行按内容高，剩下的按周平分 —— 否则星期几个字会被拉到半空里 */
     item.calGrid.style.gridTemplateRows = 'auto repeat(' + rows + ', 1fr)';
-    item.calDay = y + '-' + mo + '-' + now.getDate();
+    item.calRows = rows;
+    item.calDay = y + '-' + mo + '-' + day;
+
+    calApply(item);
+  }
+
+  /* 只算字号与档位，不动内容 —— 尺寸变化和换天都会走这里 */
+  function calApply(item) {
+    var r = item.calLast;
+    if (!r || !item.calNum) { return; }
+    var W = r.width, H = r.height;
+    var tier = calTier(W, H);
+    item.calTier = tier;
+    item.el.classList.remove('is-mini', 'is-mid', 'is-big', 'is-huge');
+    item.el.classList.add('is-' + tier);
+
+    if (tier === 'mini') {
+      var n1 = clamp(Math.min(H * 0.50, W * 0.30), 20, 92);
+      item.calWtop.style.fontSize = clamp(n1 * 0.23, 9, 20).toFixed(1) + 'px';
+      item.calNum.style.fontSize = n1.toFixed(1) + 'px';
+      return;
+    }
+    if (tier === 'mid') {
+      var n2 = clamp(Math.min(H * 0.44, W * 0.11), 16, 58);
+      item.calPillD.style.fontSize = n2.toFixed(1) + 'px';
+      item.calPillW.style.fontSize = clamp(n2 * 0.46, 11, 26).toFixed(1) + 'px';
+      return;
+    }
+    if (tier === 'big') {
+      var n3 = clamp(Math.min(H * 0.30, W * 0.19), 26, 96);
+      item.calHead.style.fontSize = clamp(n3 * 0.27, 10, 24).toFixed(1) + 'px';
+      item.calNum.style.fontSize = n3.toFixed(1) + 'px';
+      item.calMeta.style.fontSize = clamp(n3 * 0.155, 9, 13).toFixed(1) + 'px';
+      item.calLunar.style.fontSize = clamp(n3 * 0.19, 9.5, 16).toFixed(1) + 'px';
+      return;
+    }
+
+    /* huge：左边一列信息，右边整月 */
+    var n4 = clamp(Math.min(H * 0.26, W * 0.13), 26, 92);
+    item.calHead.style.fontSize = clamp(n4 * 0.28, 10, 22).toFixed(1) + 'px';
+    item.calNum.style.fontSize = n4.toFixed(1) + 'px';
+    item.calMeta.style.fontSize = clamp(n4 * 0.16, 9, 12).toFixed(1) + 'px';
+    item.calLunar.style.fontSize = clamp(n4 * 0.19, 9.5, 15).toFixed(1) + 'px';
+
+    var rows = item.calRows || 6;
+    var cellH = (H - 18) / (rows + 1);
+    var cellW = (W * 0.50) / 7;
+    var fs = clamp(Math.min(cellW * 0.44, cellH * 0.44), 7, 18);
+    item.el.style.setProperty('--cal-fs', fs.toFixed(1) + 'px');
   }
 
   function mountCal(item) {
@@ -4314,36 +4603,30 @@
     var root = document.createElement('div');
     root.className = 'cal';
     root.innerHTML =
-      '<div class="cal-head"></div>' +
-      '<div class="cal-today">' +
-        '<div class="cal-tnum"></div>' +
-        '<div class="cal-tmeta"></div>' +
+      '<div class="cal-pill"><b class="cal-pill-d"></b><i class="cal-pill-w"></i></div>' +
+      '<div class="cal-card">' +
+        '<div class="cal-wdtop"></div>' +
+        '<div class="cal-head"></div>' +
+        '<div class="cal-num"></div>' +
+        '<div class="cal-meta"></div>' +
+        '<div class="cal-lunar"></div>' +
       '</div>' +
       '<div class="cal-grid"></div>';
     item.body.appendChild(root);
+
+    item.calRoot = root;
+    item.calPillD = root.querySelector('.cal-pill-d');
+    item.calPillW = root.querySelector('.cal-pill-w');
+    item.calWtop = root.querySelector('.cal-wdtop');
     item.calHead = root.querySelector('.cal-head');
-    item.calTnum = root.querySelector('.cal-tnum');
-    item.calTmeta = root.querySelector('.cal-tmeta');
+    item.calNum = root.querySelector('.cal-num');
+    item.calMeta = root.querySelector('.cal-meta');
+    item.calLunar = root.querySelector('.cal-lunar');
     item.calGrid = root.querySelector('.cal-grid');
 
     item.fit = function (r) {
-      var today = calTodayMode(r.width, r.height);
-      item.el.classList.toggle('is-today', today);
-      item.calMode = today ? 'today' : 'month';
-
-      if (today) {
-        item.calTnum.style.fontSize =
-          clamp(Math.min(r.height * 0.48, r.width * 0.46), 18, 130).toFixed(1) + 'px';
-        item.calTmeta.style.fontSize =
-          clamp(Math.min(r.height * 0.13, r.width * 0.072), 9, 15).toFixed(1) + 'px';
-        return;
-      }
-
-      var cellW = (r.width * 0.94) / 7;
-      var cellH = (r.height - 26) / 7;
-      var fs = clamp(Math.min(cellW * 0.42, cellH * 0.46), 7.5, 20);
-      root.style.setProperty('--cal-fs', fs.toFixed(1) + 'px');
-      item.calHead.style.fontSize = clamp(fs * 1.18, 9, 22).toFixed(1) + 'px';
+      item.calLast = { width: r.width, height: r.height };
+      calApply(item);
     };
 
     paintCal(item);
@@ -4352,7 +4635,7 @@
   registerWidget('calendar', {
     name: '月历', desc: '当月日历，今天高亮；小尺寸只显示今天', icon: 'calendar',
     size: { w: 8, h: 6 }, min: { w: 4, h: 3 },
-    sizes: [[4, 3], [5, 5], [8, 6], [8, 8], [12, 8]],
+    sizes: [[4, 3], [6, 3], [8, 4], [8, 5], [8, 6], [8, 8], [12, 8]],
     create: function () { return {}; },
     mount: mountCal,
     menu: function (item) {
@@ -4376,9 +4659,12 @@
     state.items.forEach(function (o) { bottom = Math.max(bottom, o.y + o.h); });
     var maxY = bottom + 8;
     var best = null, bestCost = Infinity;
+    /* 组件也只沿 2 列格点找位置：新加的块一落地就和图标同一套竖线，
+       不会出现「左边正好差半格」 */
+    var origin = cellOriginX();
 
     for (var y = 0; y + h <= maxY; y++) {
-      for (var x = 0; x + w <= COLS; x++) {
+      for (var x = origin; x + w <= COLS; x += UNIT_W) {
         var box = { x: x, y: y, w: w, h: h };
         var hit = false;
         for (var i = 0; i < state.items.length; i++) {
@@ -4407,7 +4693,7 @@
     var spot = findFreeSpot(w, h, ox, oy);
     if (!spot) {
       var bottom = state.items.reduce(function (a, o) { return Math.max(a, o.y + o.h); }, 0);
-      spot = { x: 0, y: bottom, w: w, h: h };
+      spot = { x: Math.min(cellOriginX(), Math.max(0, COLS - w)), y: bottom, w: w, h: h };
     }
 
     var it = {
@@ -4639,9 +4925,10 @@
       var maxY = Math.max(0, Math.max(m.rows, BASE_ROWS + 8) - item.h);
       var x = clamp(Math.round((ev.clientX - grabX) / m.stepX), 0, COLS - item.w);
       var y = clamp(Math.round((ev.clientY - grabY + shift) / m.stepY), 0, maxY);
-      /* 图标只落在格点上，不然会和同一排的邻居错开半条 */
+      /* 图标只落在格点上，不然会和同一排的邻居错开半条；
+         组件横向也跟图标共用 2 列格点（纵向保持 1 行，小部件才放得下） */
+      x = snapCellX(x, item.w, cellX);
       if (item.type === 'link') {
-        x = snapCellX(x, item.w, cellX);
         y = snapCellY(y, item.h, maxY);
       }
       return { x: x, y: y };
@@ -5178,9 +5465,19 @@
 
   function applySize(item, w, h) {
     var m = metrics();
+
+    /* 画布行数只有 viewRows / BASE_ROWS 那么大：块在底部时「往上长」
+       会因为没有行可用而直接失败（右键档位点了没反应就是这个）。
+       先把画布撑到够高，再让 plan 去找位置 */
+    if (item.y + h + 2 > BASE_ROWS) {
+      BASE_ROWS = item.y + h + 2;
+      m = metrics();
+    }
+
     var bx = clamp(item.x, 0, COLS - w);
-    /* 放大后可能被右边挤回半格，图标一律再对齐一次 */
-    if (item.type === 'link') { bx = snapCellX(bx, w, cellOriginX()); }
+    /* 放大后可能被右边挤回半格，一律再对齐一次：
+       图标和组件都按「2 列 = 一个方块宽」落位，右边不会剩下半格 */
+    bx = snapCellX(bx, w, cellOriginX());
 
     var g = plan(item, { x: bx, y: item.y, w: w, h: h }, m);
 
